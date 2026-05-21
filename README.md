@@ -22,7 +22,7 @@ plugins/                        # Codex plugins developed by 42Crunch
 
 ## Adding this Marketplace
 
-Register the 42Crunch marketplace with Codex once, then install any plugin from it:
+Register the 42Crunch marketplace with Codex:
 
 ```
 codex plugin marketplace add 42Crunch-AI/codex-plugins
@@ -34,16 +34,23 @@ For a local checkout, add the repo root directory:
 codex plugin marketplace add /absolute/path/to/codex-plugins
 ```
 
+After the marketplace is added:
+
+- If your Codex build supports plugin installation from the CLI, install with:
+
+```
+codex plugin install api-security-testing@42crunch-marketplace
+```
+
+- If your Codex build only exposes `codex plugin marketplace ...` commands, open the Codex app/UI and install `api-security-testing` from the `42Crunch` marketplace there.
+
 ## Available Plugins
 
 ### [api-security-testing](./plugins/api-security-testing/)
 
 AI-powered API security plugin backed by 42Crunch. Audit OpenAPI specs, detect OWASP API Security vulnerabilities (including BOLA/BFLA), run live conformance and authorization scans against running APIs, and apply AI-assisted fixes — all through natural language.
 
-**Install:**
-```
-codex plugin install api-security-testing@42crunch-marketplace
-```
+**Install:** add the marketplace, then install `api-security-testing` from the CLI if supported, or from the Codex UI if your build does not expose `codex plugin install`.
 
 See the [plugin README](./plugins/api-security-testing/README.md) for full documentation.
 
