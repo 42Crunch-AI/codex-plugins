@@ -39,7 +39,7 @@ running `42crunch-audit` first.
    - If `SCAN42C_HOST` environment variable is set → announce silently:
      > "Using scan target from SCAN42C_HOST: `<url>`"
      Store as `SCAN_TARGET_URL` and proceed.
-   - If not set → call `AskUserQuestion`:
+   - If not set → ask the user directly:
      - **question**: `"The OAS points to <servers[0].url> as the API target. Is this the right URL to scan against?"` — options: `["Yes — use this URL", "No — I'll provide a different URL"]`
      - If **No** → ask the user to provide the URL and store it as `SCAN_TARGET_URL`.
      - If **Yes** → store `servers[0].url` as `SCAN_TARGET_URL`.
@@ -55,7 +55,7 @@ running `42crunch-audit` first.
    - BOLA candidate count: operations where the path has `{…Id}`, `{…Key}`, `{…Ref}`, or similar resource-ID placeholders AND the method is GET, PUT, PATCH, or DELETE
    - Whether the OAS contains sample data: any operation with `example`, `examples`, or `default` values on its request body or parameter schemas
 
-4. **Ask for permission to configure the scan.** Call `AskUserQuestion`:
+4. **Ask for permission to configure the scan.** Ask the user directly:
    - **question**: (show the scan preview first, then ask)
      ```
      Ready to configure the scan?
@@ -88,7 +88,9 @@ running `42crunch-audit` first.
 
 6. **Present the final scan summary** (see Output Format below).
 
-Only continue after explicit user confirmation at each permission prompt.
+Only continue after explicit user confirmation at each permission prompt. In
+Codex, use normal conversational questions for approvals and preserve the
+option wording as closely as practical.
 
 ---
 

@@ -23,7 +23,7 @@ Prepares the environment for 42Crunch audit and scan workflows in two phases:
 ## Entry Point
 
 > **Caller context**: This skill may be invoked directly by the user or as a
-> subroutine by another skill (e.g. `pre-flight`). Check whether a caller was
+> nested workflow by another skill (e.g. `pre-flight`). Check whether a caller was
 > passed. Steps 1 and 6 behave differently depending on this context — see each
 > step for details.
 
@@ -45,7 +45,7 @@ explain what they'll be able to do once setup is complete:
 >
 > Let's go.
 
-**If called as a subroutine** (caller context is set), skip this greeting entirely and proceed directly to Step 2.
+**If called as a nested workflow** (caller context is set), skip this greeting entirely and proceed directly to Step 2.
 
 ### Step 2 — Binary setup
 
@@ -85,12 +85,12 @@ Run a quick end-to-end check:
 
 ```bash
 # Credentials (macOS / Linux)
-grep -E "^(API_KEY|TRIAL_TOKEN)=" "$HOME/.42crunch/conf/env"
+test -f "$HOME/.42crunch/conf/env" && grep -qE "^(API_KEY|TRIAL_TOKEN)=" "$HOME/.42crunch/conf/env"
 ```
 
 ```powershell
 # Credentials (Windows)
-Select-String -Path "$env:APPDATA\42Crunch\conf\env" -Pattern "^(API_KEY|TRIAL_TOKEN)="
+if (Test-Path "$env:APPDATA\42Crunch\conf\env") { Select-String -Quiet -Path "$env:APPDATA\42Crunch\conf\env" -Pattern "^(API_KEY|TRIAL_TOKEN)=" }
 ```
 
 If either check fails, report the specific failure and guide the user to resolve
@@ -102,7 +102,7 @@ Display the setup summary (see Output Format below).
 
 ### Step 6 — Recommend next steps
 
-**If called as a subroutine** (caller context is set), skip the next-steps
+**If called as a nested workflow** (caller context is set), skip the next-steps
 prompt entirely. Announce `"Setup complete — continuing."` and return control
 to the caller. The caller (e.g. `pre-flight`) will resume from where it left
 off.
@@ -152,8 +152,9 @@ off.
   it. Always mask it (`api_••••••••` / `ide_••••••••` for platform tokens — keep
   prefix, replace rest; `<first-4-chars>••••••••` for free trial tokens, e.g.
   `eyJh••••••••`).
-- Use `bash_tool` for all shell commands; use `str_replace_editor` or
-  `create_file` when writing config files — never shell redirection.
+- Use Codex shell/tooling for all commands. When writing config files, use a
+  structured file edit or patching step rather than echoing secrets back to the
+  terminal. Do not expose credential values in command output.
 - Use `curl` for downloads; fall back to `wget` if `curl` is unavailable. On
   Windows use `Invoke-WebRequest`.
 - On Windows: binary filename is `42c-ast.exe`, paths use `\`, config lives in
@@ -165,4 +166,4 @@ off.
 |-----------------|----------------------------------|-----------------|
 | `API_KEY`       | *(required)*                     | Platform        |
 | `PLATFORM_HOST` | *(set during setup)*             | Platform only   |
-| `TRIAL_TOKEN`.  | *(required)*                     | Free Trial      |
+| `TRIAL_TOKEN`   | *(required)*                     | Free Trial      |

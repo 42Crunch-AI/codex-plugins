@@ -32,6 +32,12 @@ Add the 42Crunch marketplace:
 codex plugin marketplace add 42Crunch-AI/codex-plugins
 ```
 
+For a local checkout:
+
+```
+codex plugin marketplace add /absolute/path/to/codex-plugins
+```
+
 Install the `api-security-testing` plugin:
 
 ```

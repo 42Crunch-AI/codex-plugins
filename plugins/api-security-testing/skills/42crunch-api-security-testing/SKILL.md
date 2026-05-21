@@ -27,7 +27,7 @@ explicit user permission before execution.
    file selection, use the context `"pipeline"` (e.g. "Which one should I run
    through the pipeline?"). Do not proceed if any step fails or the user cancels.
 
-2. **Ask for Phase 1 permission.** Call `AskUserQuestion`:
+2. **Ask for Phase 1 permission.** Ask the user directly:
    - **question**: `"Ready to run a 42Crunch Audit on <filename>. This will analyse your OAS file and produce a scored report. Shall I proceed?"`
    - **options**: `["Yes, proceed", "No, cancel"]`
 
@@ -47,7 +47,7 @@ explicit user permission before execution.
    - If `SCAN42C_HOST` environment variable is set → announce silently:
      > "Using scan target from SCAN42C_HOST: `<url>`"
      Store as `SCAN_TARGET_URL` and proceed.
-   - If not set → call `AskUserQuestion`:
+   - If not set → ask the user directly:
      - **question**: `"The OAS points to <servers[0].url> as the API target. Is this the right URL to scan against?"` — options: `["Yes — use this URL", "No — I'll provide a different URL"]`
      - If **No** → ask the user to provide the URL and store it as `SCAN_TARGET_URL`.
      - If **Yes** → store `servers[0].url` as `SCAN_TARGET_URL`.
@@ -64,7 +64,7 @@ explicit user permission before execution.
    - BOLA candidate count: operations where the path has `{…Id}`, `{…Key}`, `{…Ref}`, or similar resource-ID placeholders AND the method is GET, PUT, PATCH, or DELETE
    - Whether the OAS contains sample data: any operation with `example`, `examples`, or `default` values on its request body or parameter schemas
 
-6. **Ask for Phase 2 permission.** Call `AskUserQuestion`:
+6. **Ask for Phase 2 permission.** Ask the user directly:
    - **question**: (show the scan preview first, then ask)
      ```
      Ready to configure the scan?
@@ -110,7 +110,9 @@ explicit user permission before execution.
     > "Clean result — your API passed both static analysis and live testing.
     > This is a good baseline to maintain."
 
-Only continue after explicit user confirmation at each permission prompt.
+Only continue after explicit user confirmation at each permission prompt. In
+Codex, use normal conversational questions for approvals and preserve the
+option wording as closely as practical.
 
 ---
 

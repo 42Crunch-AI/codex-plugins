@@ -1,0 +1,20 @@
+{
+  "name": "42crunch-marketplace",
+  "interface": {
+    "displayName": "42Crunch"
+  },
+  "plugins": [
+    {
+      "name": "api-security-testing",
+      "source": {
+        "source": "local",
+        "path": "./plugins/api-security-testing"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Security"
+    }
+  ]
+}

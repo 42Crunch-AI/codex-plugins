@@ -133,7 +133,7 @@ If validation fails, stop and fix the config before Step 2.
 
 Read the OAS `securitySchemes` and global/operation `security` definitions to
 determine the auth scheme, then collect credentials using the per-scheme flows
-below. Every credential field is collected via `AskUserQuestion` — never
+below. Every credential field is collected through direct user prompts — never
 generate, guess, or suggest credential values.
 
 **BOLA/BFLA second-user identification (do this before collecting any credentials):**
@@ -160,8 +160,8 @@ automatically; fall back to asking the user if none match:
   `admin` or `superuser`.
 - Request body or parameter has a field whose enum or description restricts it to
   admin use (e.g. `role: admin`).
-- If none of the above match and the OAS provides no clear signals, call
-  `AskUserQuestion`: `"I couldn't automatically detect any privileged operations.
+- If none of the above match and the OAS provides no clear signals, ask the user
+  directly: `"I couldn't automatically detect any privileged operations.
   Are there any admin-only or elevated-privilege endpoints I should test for
   BFLA?"` — options: `["Yes — I'll flag them", "No — skip BFLA testing"]`.
 
@@ -170,11 +170,11 @@ prompts are shown, so the user understands why they're being asked for two sets.
 
 ### Per-scheme credential collection
 
-For each auth scheme, collect credentials using `AskUserQuestion` — never generate, guess, or suggest values. Collect in this order: User 1 first, then User 2 (BOLA only), then admin (BFLA only).
+For each auth scheme, collect credentials through direct user prompts — never generate, guess, or suggest values. Collect in this order: User 1 first, then User 2 (BOLA only), then admin (BFLA only).
 
 **Login endpoint** (`POST /login`, `POST /auth/token`, etc. — most common):
 
-Announce which endpoint will be used. Then make a **single** `AskUserQuestion` call sized to the situation:
+Announce which endpoint will be used. Then ask a **single** grouped question sized to the situation:
 
 - **No BOLA found** — use 2 questions:
   - `header: "User 1"`, question: `"What is User 1's username or email?"`  → store as `{{username}}`
@@ -186,20 +186,20 @@ Announce which endpoint will be used. Then make a **single** `AskUserQuestion` c
   - `header: "User 2"`, question: `"What is User 2's username or email? (must NOT share User 1's resources)"`  → store as `{{user2Username}}`
   - `header: "User 2"`, question: `"What is User 2's password or PIN?"`                                        → store as `{{user2Password}}`
 
-For BFLA (admin) credentials, use a separate `AskUserQuestion` call after the BOLA pair — collect `{{adminUsername}}` and `{{adminPassword}}` in 2 questions with `header: "Admin"`.
+For BFLA (admin) credentials, use a separate direct prompt after the BOLA pair — collect `{{adminUsername}}` and `{{adminPassword}}` in 2 questions with `header: "Admin"` or equivalent labeling.
 
 **Bearer / JWT** (no login endpoint in OAS):
 
-- `AskUserQuestion`: `"I need a bearer token for User 1. Do you have one ready, or acquire from an endpoint?"` — options: `["I have a token — I'll paste it", "I need to acquire one — I'll specify the endpoint"]`
+- Ask the user directly: `"I need a bearer token for User 1. Do you have one ready, or acquire from an endpoint?"` — options: `["I have a token — I'll paste it", "I need to acquire one — I'll specify the endpoint"]`
   - If paste → ask for the token, store as `{{user1Token}}`
   - If acquire → ask for endpoint, then collect username + password as above
 - If BOLA found → repeat for User 2, store as `{{user2Token}}`
 
-**API Key**: `AskUserQuestion` for the key value, store as `{{apiKey}}`. Header/param name from `securitySchemes[*].name` and `in`.
+**API Key**: ask the user directly for the key value, store as `{{apiKey}}`. Header/param name from `securitySchemes[*].name` and `in`.
 
 **Basic Auth**: use the same adaptive single-call pattern as Login endpoint — 2 questions (no BOLA) or 4 questions (BOLA). For BFLA admin, use a separate 2-question call with `header: "Admin"`.
 
-**OAuth2**: `AskUserQuestion`: `"Do you have an access token, or use the token endpoint from the OAS?"` — options: `["I have an access token", "Use the token endpoint — I'll provide client credentials"]`. Collect accordingly.
+**OAuth2**: ask the user directly: `"Do you have an access token, or use the token endpoint from the OAS?"` — options: `["I have an access token", "Use the token endpoint — I'll provide client credentials"]`. Collect accordingly.
 
 Do not proceed until at least the primary user's credentials are confirmed.
 
@@ -313,7 +313,7 @@ Before classifying operations, establish the source of test data for the scan.
 **Check the OAS for existing sample data**: scan all operation request bodies and
 parameters for `example`, `examples`, or `default` values on their schemas.
 
-Call `AskUserQuestion`:
+Ask the user directly:
 
 **If OAS has sample data:**
 - **question**: `"Do you have test data to use for testing, or shall I use the samples present in the OAS?"`
@@ -324,7 +324,7 @@ Call `AskUserQuestion`:
 - **options**: `["I'll provide a Postman collection", "I'll provide values manually as needed"]`
 
 **If the user selects a Postman collection:**
-1. Call `AskUserQuestion` — **question**: `"Please share the path to your Postman collection file (v2.1 JSON format)."` — wait for the file path.
+1. Ask the user directly — **question**: `"Please share the path to your Postman collection file (v2.1 JSON format)."` — wait for the file path.
 2. Parse the Postman v2.1 JSON.
 3. Build a test data lookup table keyed by HTTP method + path pattern:
    ```
@@ -440,7 +440,7 @@ DeleteAccount          | D      | no    | register+login throwaway → delete th
 
 **`BOLA? = yes` has a direct consequence in Step 4:** every operation marked as a BOLA candidate will receive an additional BOLA test scenario (using User 2's token) alongside its happy path scenario. Every operation marked as a BFLA candidate will receive a BFLA test scenario (using User 1's low-privilege token).
 
-Call `AskUserQuestion`:
+Ask the user directly:
 - **question**: `"Here is the proposed operation classification (shown above). Does this look correct, or do you need to correct any misclassifications?"`
 - **options**: `["Yes — proceed", "No — I need to correct some classifications"]`
 
@@ -856,7 +856,7 @@ For each operation where the happy path failed, determine the root cause:
 | Observed symptom | Root cause | Action |
 |---|---|---|
 | HTTP 400 / 422 with validation error | **Bad sample data** — request body or parameters fail server validation | Use Postman collection lookup table if available; otherwise ask the user to provide valid values |
-| HTTP 2xx but conformance FAIL (undocumented fields in response) | **Excessive response data** — server returns fields not in the OAS schema (potential OWASP API3 Excessive Data Exposure) | **Block and call `AskUserQuestion`**: question: `"The response for <operation> includes fields not in your OAS schema: [list fields]. Undocumented fields in responses can expose internal data that clients shouldn't see (OWASP API3). How would you like to handle it?"` options: `["Add these fields to the OAS", "Accept as-is"]`. Do not proceed to the full scan until the user has made an explicit choice for every affected operation. |
+| HTTP 2xx but conformance FAIL (undocumented fields in response) | **Excessive response data** — server returns fields not in the OAS schema (potential OWASP API3 Excessive Data Exposure) | **Block and ask the user directly**: question: `"The response for <operation> includes fields not in your OAS schema: [list fields]. Undocumented fields in responses can expose internal data that clients shouldn't see (OWASP API3). How would you like to handle it?"` options: `["Add these fields to the OAS", "Accept as-is"]`. Do not proceed to the full scan until the user has made an explicit choice for every affected operation. |
 | HTTP 2xx but wrong success code (e.g. got `200`, expected `201`) | **Status code mismatch** — `defaultResponse` in the scan config doesn't match reality | Update `defaultResponse` for that operation |
 | HTTP 404 | **Unresolved path variable** — scenario chain is missing or the `variableAssignment` JSON Pointer is wrong | Inspect the chain; fix the JSON Pointer, or build a missing chain |
 | HTTP 401 / 403 | **Auth failure** — token is invalid, expired, or wrong scheme applied | Re-collect credentials; verify the token is still valid |
@@ -877,7 +877,7 @@ failing operation before requesting manual input.
 After resolving each batch of failures, re-run using the same command as above (output to `/tmp/42c-happy-out.json` on macOS/Linux, `%TEMP%\42c-happy-out.json` on Windows) and re-extract with the same extraction snippet above.
 
 For each operation where the root cause cannot be resolved (e.g. the required
-resource cannot be created in this environment), call `AskUserQuestion`:
+resource cannot be created in this environment), ask the user directly:
 - **question**: `"The happy path for <operationId> is still failing (<root-cause summary>). What would you like to do?"`
 - **options**: `["Try a different fix", "Skip this operation — I'll come back to it later", "Abort the scan setup"]`
 
@@ -893,7 +893,7 @@ created, modified, or deleted records in your database. Before the full scan
 runs, the database should be restored to a clean state so that conformance
 fuzzing and authorization tests start from known data.
 
-Call `AskUserQuestion`:
+Ask the user directly:
 - **question**: `"The happy path scenarios have finished running and may have modified your database (created, updated, or deleted records). Please reset your database to a clean state before the full scan starts. Have you reset the database?"`
 - **options**: `["Yes — database is reset, ready to proceed", "No — continue without resetting (results may be affected)"]`
 
@@ -915,7 +915,7 @@ Once all happy paths pass, set `happyPathOnly: false` before the full scan:
 ## Step 5.5 — Permission Gate Before Full Scan
 
 All happy paths have passed. Before running the full security scan, ask the
-user for explicit consent. Call `AskUserQuestion`:
+user for explicit consent. Ask the user directly:
 
 - **question**: `"All happy paths passed successfully. I'm ready to run the full security scan against <SCAN_TARGET_URL>. This will execute authorization tests (BOLA/BFLA) and conformance fuzzing across all <N> operations. Shall I proceed?"`
 - **options**: `["Yes — run the full scan", "No — stop here"]`
@@ -1039,12 +1039,12 @@ The full scan (conformance fuzzing and authorization tests) has now completed.
 It may have made malformed requests, cross-user resource accesses (BOLA/BFLA),
 and repeated operations that further mutated your database state.
 
-Call `AskUserQuestion`:
+Ask the user directly:
 - **question**: `"The full security scan has finished. Conformance fuzzing and authorization tests (BOLA/BFLA) may have further modified your database. Would you like to reset your database before reviewing results and applying fixes?"`
 - **options**: `["Yes — I'll reset the database now", "No — continue to results"]`
 
 If the user selects **Yes**: display the message `"Please reset your database
-and confirm when ready."`, then call a second `AskUserQuestion`:
+and confirm when ready."`, then ask a second direct question:
 - **question**: `"Database reset complete?"`
 - **options**: `["Yes — ready to review results"]`
 
@@ -1150,16 +1150,16 @@ If any BFLA finding was confirmed, add:
 
 ### 7c — Consent Gate
 
-**Platform mode** — call `AskUserQuestion`:
+**Platform mode** — ask the user directly:
 - **question**: `"Here is the complete scan report (shown above). I can apply the following fixes to <filename>: 🔴 Authorization fixes: [list] 🟠 SQG-blocking conformance fixes: [list]. The 🟡 informational findings are not SQG-blocking and will not be fixed automatically — let me know if you'd like to address any of them too. What would you like to do?"`
 - **options**: `["Yes — apply all fixes now", "Show me the diff first", "No — skip fixes for now"]`
 
-**Free Trial mode** — call `AskUserQuestion`:
+**Free Trial mode** — ask the user directly:
 - **question**: `"Here is the complete scan report (shown above). No SQG enforcement applies in free trial mode. 🔴 Authorization fixes I can apply: [list] 🟡 Conformance findings (informational — your call whether to fix): [list]. What would you like to do?"`
 - **options**: `["Yes — apply the authorization fixes", "Show me the diff first", "No — skip fixes; summarise findings only"]`
 
 If the user chooses **"Show me the diff first"** in either mode, display the proposed
-change for each fix one at a time in unified diff format then call `AskUserQuestion`:
+change for each fix one at a time in unified diff format then ask the user directly:
 - **question**: `"Apply this change?"` — **options**: `["Yes", "No — skip this one"]`
 
 Only advance to the next fix after the user confirms the current one.
@@ -1188,11 +1188,11 @@ Skip 7e entirely only when the scan has zero SQG-blocking findings.
 
 #### 7e-2 — Consent gate for code fixes
 
-Call `AskUserQuestion`:
+Ask the user directly:
 - **question**: `"The OAS has been updated. The following SQG-blocking issues also require server-side code fixes — the API implementation is the root cause. Should I locate and fix the code? <list all SQG-blocking findings by operation>"`
 - **options**: `["Yes — find and fix the code", "Show me the relevant code first", "No — skip code fixes"]`
 
-If **"Show me the relevant code first"** is chosen, locate each handler (step 7e-3) and display the relevant code block without making any changes, then call `AskUserQuestion` again with the same options to proceed.
+If **"Show me the relevant code first"** is chosen, locate each handler (step 7e-3) and display the relevant code block without making any changes, then ask the user again with the same options to proceed.
 
 #### 7e-3 — Locate route handlers
 
@@ -1210,7 +1210,7 @@ For each SQG-blocking finding:
 |---|---|---|
 | **BOLA** (OWASP API1) | Handler fetches a resource by a path/query ID without verifying that it belongs to the authenticated user | Add an ownership check after the resource is fetched: compare `resource.owner_id` (or equivalent field) to the authenticated user's ID; return `403 Forbidden` if they do not match |
 | **BFLA** (OWASP API5) | Handler for a privileged/admin operation does not check the caller's role, scope, or group membership before executing | Add a role/scope/permission check at the top of the handler; return `403 Forbidden` if the caller lacks the required privilege |
-| **Conformance — undocumented response fields** | Response serializer or ORM query returns fields not present in the OAS schema | Call `AskUserQuestion`: _"The response for `<METHOD> <path>` includes fields not declared in the OAS: `<field list>`. Are these intentional?"_ — **options**: `["Add them to the OAS (field is intentional)", "Remove them from the code (field should not be returned)"]`. Apply the chosen fix: extend the OAS schema, or filter/exclude the fields in the serializer/handler |
+| **Conformance — undocumented response fields** | Response serializer or ORM query returns fields not present in the OAS schema | Ask the user directly: _"The response for `<METHOD> <path>` includes fields not declared in the OAS: `<field list>`. Are these intentional?"_ — **options**: `["Add them to the OAS (field is intentional)", "Remove them from the code (field should not be returned)"]`. Apply the chosen fix: extend the OAS schema, or filter/exclude the fields in the serializer/handler |
 | **Conformance — missing required response fields** | Handler response omits a field marked `required` in the OAS schema | Add the missing field to the response payload or serializer |
 | **Conformance — wrong response status code** | Handler returns a status code that differs from what the OAS declares as the success code | Update the handler to return the status code declared in the OAS |
 | **Conformance — wrong or missing Content-Type / headers** | Handler does not set the `Content-Type` or other response headers required by the OAS | Add the required headers to the response |
@@ -1218,7 +1218,7 @@ For each SQG-blocking finding:
 
 #### 7e-5 — Diff and confirm before writing
 
-For each proposed code change, display it in unified diff format and call `AskUserQuestion`:
+For each proposed code change, display it in unified diff format and ask the user directly:
 - **question**: `"Apply this fix to <file>?"` — **options**: `["Yes", "No — skip this one"]`
 
 Only write the change after explicit confirmation. Advance to the next finding only after the current one is confirmed or skipped.

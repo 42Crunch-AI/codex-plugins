@@ -27,7 +27,7 @@ Does **not** run a live scan — use the `42crunch-scan` skill for that.
    file selection, use the context `"audit"` (e.g. "Which one should I audit?").
    Do not proceed if any step fails or the user cancels.
 
-2. **Ask for permission.** Call `AskUserQuestion`:
+2. **Ask for permission.** Ask the user directly:
    - **question**: `"Ready to run a 42Crunch Audit on <filename>. This will analyse your OAS file and produce a scored report. Shall I proceed?"`
    - **options**: `["Yes, proceed", "No, cancel"]`
 
@@ -58,7 +58,9 @@ Does **not** run a live scan — use the `42crunch-scan` skill for that.
    > "No issues found — your API has a clean audit result. Run `42crunch-scan`
    > to verify the live API matches its contract."
 
-Only continue after explicit user confirmation at each permission prompt.
+Only continue after explicit user confirmation at each permission prompt. In
+Codex, use normal conversational questions for approvals and preserve the
+option wording as closely as practical.
 
 ---
 

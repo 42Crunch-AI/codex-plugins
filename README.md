@@ -7,8 +7,9 @@ The official [42Crunch](https://www.42crunch.com) plugin marketplace for Codex â
 ## Structure
 
 ```
-.codex-plugin/
-  marketplace.json              # Plugin registry manifest
+.agents/
+  plugins/
+    marketplace.json            # Plugin registry manifest
 plugins/                        # Codex plugins developed by 42Crunch
   api-security-testing/
     .codex-plugin/
@@ -25,6 +26,12 @@ Register the 42Crunch marketplace with Codex once, then install any plugin from 
 
 ```
 codex plugin marketplace add 42Crunch-AI/codex-plugins
+```
+
+For a local checkout, add the repo root directory:
+
+```
+codex plugin marketplace add /absolute/path/to/codex-plugins
 ```
 
 ## Available Plugins
