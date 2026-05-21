@@ -1,7 +1,7 @@
 {
   "name": "api-security-testing",
   "description": "Catch API security issues during development: audit, scan, remediate, validate with AI guardrails in Codex.",
-  "version": "1.5.7",
+  "version": "1.0.0",
   "author": {
     "name": "42Crunch",
     "email": "support@42crunch.com",
