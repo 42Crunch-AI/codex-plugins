@@ -12,8 +12,6 @@ The official [42Crunch](https://www.42crunch.com) plugin marketplace for Codex â
     marketplace.json            # Plugin registry manifest
 plugins/                        # Codex plugins developed by 42Crunch
   api-security-testing/
-    .codex-plugin/
-      plugin.json               # Plugin metadata
     skills/                     # Skill definitions
     references/                 # Reference definitions
     README.md                   # Documentation
@@ -21,6 +19,8 @@ plugins/                        # Codex plugins developed by 42Crunch
 ```
 
 ## Adding this Marketplace
+
+### Via CLI
 
 Register the 42Crunch marketplace with Codex:
 
@@ -43,6 +43,38 @@ codex plugin install api-security-testing@42crunch-marketplace
 ```
 
 - If your Codex build only exposes `codex plugin marketplace ...` commands, open the Codex app/UI and install `api-security-testing` from the `42Crunch` marketplace there.
+
+### Via the Codex Application (UI)
+
+1. Open the Codex application and click **Plugins** in the sidebar.
+2. Click the **More** dropdown, then select **+ Add more**.
+
+   ![Add More dropdown](docs/images/codex-add-more.png)
+
+3. Fill in the **Add marketplace** form:
+   - **Source:** `https://github.com/42crunch-AI/codex-plugins.git`
+   - **Git ref:** `main`
+   - **Sparse paths:** *(leave blank)*
+
+   ![Add marketplace form](docs/images/codex-add-marketplace-form.png)
+
+4. Click **Add marketplace**.
+
+## Plugin Installation (UI)
+
+1. Go back to the **Plugins** main page and open the **More** dropdown.
+2. Click **+** to select **42Crunch API Security**.
+
+   ![42Crunch API Security plugin listing](docs/images/codex-plugin-install.png)
+
+3. Click **Install**.
+
+## Using the 42Crunch API Security Testing Plugin
+
+1. Go to the **Plugins** page and open the **More** dropdown.
+2. Select the **42Crunch** marketplace, then click **42Crunch API Security**.
+
+   ![42Crunch API Security plugin detail](docs/images/codex-plugin-detail.png)
 
 ## Available Plugins
 
