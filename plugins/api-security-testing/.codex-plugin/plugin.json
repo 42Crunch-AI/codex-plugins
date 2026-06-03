@@ -36,6 +36,8 @@
     "websiteURL": "https://42crunch.com",
     "privacyPolicyURL": "https://42crunch.com/privacy-policy/",
     "termsOfServiceURL": "https://42crunch.com/terms-of-use/",
+    "composerIcon": ".assets/logo.png",
+    "logo": ".assets/logo.png",
     "defaultPrompt": [
       "Run a 42Crunch audit on my OpenAPI spec",
       "Set up 42Crunch for API security testing",
