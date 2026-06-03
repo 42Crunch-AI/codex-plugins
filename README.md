@@ -47,7 +47,7 @@ codex plugin install api-security-testing@42crunch-marketplace
 ### Via the Codex Application (UI)
 
 1. Open the Codex application and click **Plugins** in the sidebar.
-2. Click the **More** dropdown, then select **+ Add more**.
+2. Click the **Built by OpenAI** dropdown, then select **+ Add more**.
 
    ![Add More dropdown](docs/images/codex-add-more.png)
 
@@ -62,19 +62,25 @@ codex plugin install api-security-testing@42crunch-marketplace
 
 ## Plugin Installation (UI)
 
-1. Go back to the **Plugins** main page and open the **More** dropdown.
-2. Click **+** to select **42Crunch API Security**.
+1. In the Plugins page, Click the **Built by OpenAI** dropdown.
+2. Select **42Crunch** marketplace and then select **42Crunch API Security**.
 
    ![42Crunch API Security plugin listing](docs/images/codex-plugin-install.png)
 
-3. Click **Install**.
+3. Click **+ Add Plugin**.
 
+   ![42Crunch API Security plugin installation](docs/images/codex-install-progress.png)
 ## Using the 42Crunch API Security Testing Plugin
 
-1. Go to the **Plugins** page and open the **More** dropdown.
+1. Go to the **Plugins** page and open the **Built by OpenAI** dropdown.
 2. Select the **42Crunch** marketplace, then click **42Crunch API Security**.
 
    ![42Crunch API Security plugin detail](docs/images/codex-plugin-detail.png)
+3. Click **Try in Chat**
+
+Or 
+
+Simply type in a new chat `/42crunch` and select the skill you want to use.
 
 ## Available Plugins
 
