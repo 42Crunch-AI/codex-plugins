@@ -10,6 +10,13 @@ The official [42Crunch](https://www.42crunch.com) plugin marketplace for Codex �
 .agents/
   plugins/
     marketplace.json            # Plugin registry manifest
+docs/
+   images/
+    codex-add-marketplace-form.png
+    codex-add-more.png
+    codex-install-progress.png
+    codex-plugin-detail.png
+    codex-plugin-install.ong
 plugins/                        # Codex plugins developed by 42Crunch
   api-security-testing/
     skills/                     # Skill definitions
@@ -60,6 +67,16 @@ codex plugin install api-security-testing@42crunch-marketplace
 
 4. Click **Add marketplace**.
 
+## Available Plugins
+
+### [api-security-testing](./plugins/api-security-testing/)
+
+AI-powered API security plugin backed by 42Crunch. Audit OpenAPI specs, detect OWASP API Security vulnerabilities (including BOLA/BFLA), run live conformance and authorization scans against running APIs, and apply AI-assisted fixes — all through natural language.
+
+**Install:** add the marketplace, then install `api-security-testing` from the CLI if supported, or from the Codex UI if your build does not expose `codex plugin install`.
+
+See the [plugin README](./plugins/api-security-testing/README.md) for full documentation.
+
 ## Plugin Installation (UI)
 
 1. In the Plugins page, Click the **Built by OpenAI** dropdown.
@@ -70,6 +87,7 @@ codex plugin install api-security-testing@42crunch-marketplace
 3. Click **+ Add Plugin**.
 
    ![42Crunch API Security plugin installation](docs/images/codex-install-progress.png)
+
 ## Using the 42Crunch API Security Testing Plugin
 
 1. Go to the **Plugins** page and open the **Built by OpenAI** dropdown.
@@ -81,17 +99,6 @@ codex plugin install api-security-testing@42crunch-marketplace
 Or 
 
 Simply type in a new chat `/42crunch` and select the skill you want to use.
-
-## Available Plugins
-
-### [api-security-testing](./plugins/api-security-testing/)
-
-AI-powered API security plugin backed by 42Crunch. Audit OpenAPI specs, detect OWASP API Security vulnerabilities (including BOLA/BFLA), run live conformance and authorization scans against running APIs, and apply AI-assisted fixes — all through natural language.
-
-**Install:** add the marketplace, then install `api-security-testing` from the CLI if supported, or from the Codex UI if your build does not expose `codex plugin install`.
-
-See the [plugin README](./plugins/api-security-testing/README.md) for full documentation.
-
 
 ## Links
 
