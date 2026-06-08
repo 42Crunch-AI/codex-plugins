@@ -10,13 +10,8 @@ The official [42Crunch](https://www.42crunch.com) plugin marketplace for Codex â
 .agents/
   plugins/
     marketplace.json            # Plugin registry manifest
-docs/
-   images/
-    codex-add-marketplace-form.png
-    codex-add-more.png
-    codex-install-progress.png
-    codex-plugin-detail.png
-    codex-plugin-install.ong
+docs/                           # Repository-level documentation assets
+  images/                       # Screenshots and diagrams used in READMEs
 plugins/                        # Codex plugins developed by 42Crunch
   api-security-testing/
     skills/                     # Skill definitions
