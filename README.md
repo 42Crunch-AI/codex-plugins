@@ -70,7 +70,7 @@ AI-powered API security plugin backed by 42Crunch. Audit OpenAPI specs, detect O
 
 **Install:** add the marketplace, then install `api-security-testing` from the CLI if supported, or from the Codex UI if your build does not expose `codex plugin install`.
 
-See the [plugin README](./plugins/api-security-testing/README.md) for full documentation.
+See the [plugin README](./plugins/api-security-testing/README.md) for full documentation and [RECIPES.md](./plugins/api-security-testing/RECIPES.md) for common scenario guides.
 
 ## Plugin Installation (UI)
 

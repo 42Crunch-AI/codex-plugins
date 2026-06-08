@@ -54,6 +54,16 @@ If your Codex CLI does not expose `codex plugin install`, open the Codex app/UI 
 4. **Fix issues** — Codex presents findings by severity and asks your consent before changing anything
 5. **Scan your API** — say: *"run a conformance scan"* against your running server
 
+## Common Scenarios
+
+See [RECIPES.md](./RECIPES.md) for step-by-step guides covering the most common workflows, including:
+
+- Running a **fix-only audit** from an existing report (skip re-running the audit)
+- **Review-only mode** — see findings without applying any fixes
+- **Full pipeline** (audit + scan) in a single session
+- **Scan only** when the audit is already passing
+- **Generating an OAS** from source code, then auditing it immediately
+
 ## Skills
 
 ### `42crunch-setup`
