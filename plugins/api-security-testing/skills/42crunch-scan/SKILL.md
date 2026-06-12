@@ -78,10 +78,13 @@ running `42crunch-audit` first.
    Read `../../references/scan-workflow.md` and apply only the
    commands for the identified mode throughout.
    The workflow sets up the scan config, collects credentials, gathers test data,
-   classifies operations, validates happy paths, then asks for permission again
-   before running the full scan. It presents a **risk-classified findings report**
-   (Authorization failures / SQG-blocking conformance / informational conformance)
-   and pauses for consent before applying any OAS changes.
+   shows a complete operation-by-operation classification table, validates happy paths,
+   then asks for permission again before running the full scan. It presents a **risk-classified findings report**
+   (Authorization failures / SQG-blocking conformance / informational conformance).
+   Fix candidates are determined by SQG-blocking rules and authorization failures — not severity alone.
+   The skill pauses and asks the user to consent before applying any OAS changes or server-side code fixes.
+   Optionally prompt user to restart the API after server-side code fixes are applied,
+   or skipped, before the final scan summary.
 
   **Mandatory checkpoint:** after any direct edit to `CONF_FILE` (including
   `environments.default.variables.*`, auth wiring, or scenario chains), run
@@ -91,7 +94,21 @@ running `42crunch-audit` first.
    **Free Trial mode**: no SQG is enforced for scan. Present all findings for
    information. The user decides which (if any) to fix.
 
-6. **Present the final scan summary** (see Output Format below).
+6. **Render findings and ask for fix permission before final Scan summary.**
+
+   After the full scan completes, do **not** jump directly to the final
+   "Scan Complete" summary when findings exist. First complete
+   `scan-workflow.md` Step 12 in order:
+   - render the full three-tier scan report (Authorization failures /
+     SQG-blocking conformance / informational conformance);
+   - assemble the fix candidate lists from that report and the SQG blocking
+     rules;
+   - ask the user the Step 12c consent question with the proposed fix lists.
+
+   Only proceed to OAS or server-side code fixes after the user explicitly
+   chooses to apply fixes. If the user declines fixes, or after the fix and
+   optional verification loop completes, then present the final scan summary
+   (see Output Format below).
 
 Only continue after explicit user confirmation at each permission prompt. In
 Codex, use normal conversational questions for approvals and preserve the

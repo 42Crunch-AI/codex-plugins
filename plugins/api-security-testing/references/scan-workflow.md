@@ -91,6 +91,19 @@ Check whether `.42c/scan/<alias>/scanconf.json` exists.
 - If valid: store `CONF_FILE=.42c/scan/<alias>/scanconf.json` and proceed to Step 2.
 - If invalid: surface the error to the user and stop.
 
+**Scan Configuration Normalization after first generation (required):**
+- On first `scan conf generate`, the generated `environments.default.variables`
+  includes one variable per OpenAPI security scheme (for example bearer auth,
+  oauth2, apiKey, or basic auth variables) typically with `"required": true`.
+  - Normalize these generated security-related variables to `"required": false`
+    before proceeding, unless the user explicitly wants strict required inputs.
+- The generated `authenticationDetails` is also initialized with one default credential
+  per OpenAPI security scheme defined in the OAS (for example bearer, oauth2, basic, or apiKey).
+  - Use this generated default credential as the User 1 credential for that
+    scheme. Update/wire that default entry as needed; do not create an additional
+    User 1 credential unless the user explicitly asks for multiple primary
+    identities.
+
 ### 1c — Write target URL to config
 
 Write `SCAN_TARGET_URL` (confirmed in the skill's URL resolution step) into
@@ -100,6 +113,11 @@ checked before the workflow started.
 
 Important schema rule for `environments.default.variables`:
 - Variable entries must be objects with a source strategy, not raw string literals.
+- Keep generated security-scheme variables optional for scan execution — set `"required": false`
+  for each generated security-scheme variable in `environments.default.variables`.
+- For values used by operation templates (for example `{{username}}`, `{{password}}`),
+  add entries under `environments.default.variables` using `"from": "environment"`
+  with both `"name"` and `"required": false`.
 - Use this shape for scan variables:
   ```json
   "host": {
@@ -107,6 +125,18 @@ Important schema rule for `environments.default.variables`:
     "from": "environment",
     "required": false,
     "default": "<SCAN_TARGET_URL>"
+  },
+  "username": {
+    "name": "SCAN42C_USERNAME",
+    "from": "environment",
+    "required": false,
+    "default": "<user1-username>"
+  },
+  "password": {
+    "name": "SCAN42C_PASSWORD",
+    "from": "environment",
+    "required": false,
+    "default": "<user1-password>"
   }
   ```
 
@@ -215,31 +245,61 @@ formats, but the extension does not — always use `$ref` regardless.
 
 **Pattern:**
 ```json
-"<CredentialName>": {
-  "description": "<description>",
-  "credential": "{{<tokenVar>}}",
-  "requests": [
-    {
-      "$ref": "#/operations/<LoginOperationId>/request",
-      "responses": {
-        "200": {
-          "expectations": { "httpStatus": 200 },
-          "variableAssignments": {
-            "<tokenVar>": {
-              "in": "body", "from": "response", "contentType": "json",
-              "path": { "type": "jsonPointer", "value": "/<tokenField>" }
+"authenticationDetails": [
+  {
+    "<SchemeName>": {
+      "type": "<bearer|oauth2|basic|apiKey>",
+      "default": "<CredentialName>",
+      "credentials": {
+        "<CredentialName>": {
+          "description": "<description>",
+          "credential": "{{<tokenVar>}}",
+          "requests": [
+            {
+              "$ref": "#/operations/<LoginOperationId>/request",
+              "responses": {
+                "200": {
+                  "expectations": { "httpStatus": 200 },
+                  "variableAssignments": {
+                    "<tokenVar>": {
+                      "in": "body", "from": "response", "contentType": "json",
+                      "path": { "type": "jsonPointer", "value": "/<tokenField>" }
+                    }
+                  }
+                }
+              }
             }
-          }
+          ]
         }
       }
     }
-  ]
-}
+  }
+]
 ```
 
 Replace `<LoginOperationId>` with the `operationId` of the operation that issues the
 token (look for a `POST /login`, `POST /auth/token`, or equivalent). Replace
 `<tokenField>` with the JSON Pointer path to the token value in the response body.
+
+**Variable scoping — credential context only:**
+`variableAssignments` in a credential acquisition step are scoped to the credential
+context. Only the token variable `<tokenVar>` (the one referenced by `"credential"`) is reliably
+available in the operation context at scan time. Any extra variables captured here are NOT in the operation context during full fuzzing scans.
+
+**Rule:** capture only the credential (for example Bearer token, API key, or Basic Auth) 
+in `authenticationDetails`. For any other data needed from the login response, 
+add an explicit `before` block on each operation that needs it and capture the value
+there instead (See Step 6 — Class-B: dependency chain pattern).
+  - If many operations share the same variable, use the global 
+    before block (see Step 6 — Global `before` block). Do not rely on
+    variableAssignments in `authenticationDetails` for anything beyond the
+    credential token itself.
+
+**Rule:** use existing generated default credential for User 1.
+After initial scan config generation, treat the scheme's default generated
+credential in `authenticationDetails` as User 1. Populate or adjust that
+credential's `credential`, `requests`, and `variableAssignments` fields as
+needed instead of creating a second User 1 credential entry.
 
 **Second user (BOLA):** use `environment` to override the credential variables for that
 step without duplicating the operation:
@@ -274,39 +334,9 @@ variable names used in the referenced operation's `requestBody`. If the login op
 uses hardcoded values instead of `{{variables}}`, update its `requestBody` to use
 template variables first — otherwise `environment` overrides have no effect.
 
-**Multi-step credential (e.g. register then login):** add multiple entries to `requests`
-in sequence. The token capture goes on the last step:
-```json
-"requests": [
-  {
-    "$ref": "#/operations/<RegisterOperationId>/request",
-    "environment": { "<usernameVar>": "{{<throwawayUser>}}", ... },
-    "responses": {
-      "201": { "expectations": { "httpStatus": 201 } },
-      "409": { "expectations": { "httpStatus": 409 } }
-    }
-  },
-  {
-    "$ref": "#/operations/<LoginOperationId>/request",
-    "environment": { "<usernameVar>": "{{<throwawayUser>}}", ... },
-    "responses": {
-      "200": {
-        "expectations": { "httpStatus": 200 },
-        "variableAssignments": {
-          "<tokenVar>": {
-            "in": "body", "from": "response", "contentType": "json",
-            "path": { "type": "jsonPointer", "value": "/<tokenField>" }
-          }
-        }
-      }
-    }
-  }
-]
-```
-
 ---
 
-## Step 2.5 — Test Data
+## Step 3 — Test Data
 
 Before classifying operations, establish the source of test data for the scan.
 
@@ -331,21 +361,86 @@ Ask the user directly:
    { "<METHOD> <path>": { body: {...}, pathVars: {...}, queryParams: {...} } }
    ```
 4. Announce: `"Loaded test data from Postman collection: <N> request(s) matched."` 
-5. This table is used in Step 3 (classification) and Step 4 (scenario building) to
-   auto-populate Class-C operations — no reactive import needed in Step 5.
+5. This table is used in Step 5 (classification) and Step 6 (scenario building) to
+   auto-populate Class-C operations — no reactive import needed in Step 8.
 
-If re-seeding is needed after a destructive scan operation (Step 3 Class D), use
+If re-seeding is needed after a destructive scan operation (Step 5 Class-D), use
 the seed command captured here. If no seed command was provided and Class-D
 operations exist, note to the user that they may need to manually restore test
 records between scan runs if the primary user's account is deleted.
 
 ---
 
-## Step 3 — Operation Classification
+## Step 4 — Built-in Variables
+
+The scan config supports a set of built-in variables that generate dynamic values at scan runtime. These can be used in place of or concatenated with static string values for parameters and request body properties.
+
+| Variable | Description |
+|---|---|
+| `{{$randomString}}` | Random alphanumeric string of 20 characters |
+| `{{$randomuint}}` | Random uint32 integer |
+| `{{$uuid}}` | Unique UUID |
+| `{{$timestamp}}` | Current time in UNIX format |
+| `{{$timestamp3339}}` | Current date and time in RFC 3339 format |
+| `{{$randomFromSchema}}` | Value generated from the schema defined in the OAS |
+
+**When to use them:** built-in variables are most useful for operations that require unique values across iterations. For example, when testing a user registration endpoint, using a static email address causes the second and subsequent iterations to fail with `409 Conflict`. Instead, compose the value with a built-in variable to guarantee uniqueness each time:
+
+```json
+"email": "user{{$randomuint}}@email.com"
+```
+
+Built-in variables can be concatenated with any static string prefix or suffix. They are evaluated fresh on every request — each iteration gets a different value.
+
+**Where to place them — scenario-level `environment`, not global variables:**
+
+Do **not** put built-in variable expressions in `environments.default.variables`. Global variables must be static strings (or environment-variable overrides). Instead, pass built-in variable expressions in the `environment` block of the scenario request step that needs them:
+
+```json
+"scenarios": [
+  {
+    "key": "happy.path",
+    "fuzzing": true,
+    "requests": [
+      {
+        "fuzzing": true,
+        "$ref": "#/operations/UserRegistration/request",
+        "environment": {
+          "reg_username": "user{{$randomuint}}",
+          "reg_email": "user{{$randomuint}}@example.com",
+          "reg_password": "password"
+        }
+      }
+    ]
+  }
+]
+```
+
+This keeps the operation reusable: a `before` block that calls `UserRegistration` can supply its own fixed throwaway values in its own `environment` override, while the happy-path scenario independently supplies randomised values — neither one interferes with the other.
+
+**Common patterns:**
+
+```json
+"username": "testuser_{{$randomString}}",
+"email": "user{{$randomuint}}@example.com",
+"referenceId": "{{$uuid}}",
+"createdAt": "{{$timestamp3339}}"
+```
+
+Keep these available when classifying operations in Step 5 — Class-A operations that create uniquely-keyed resources (users, accounts, orders) should use built-in variables rather than static literals to avoid collision failures across scan iterations.
+
+---
+
+## Step 5 — Operation Classification
 
 Before writing any scenario into the scan config, analyse every operation in
 the OAS and classify it. Before presenting the table, give the user a brief
 explanation of the four classes so they can meaningfully validate the results.
+
+This step is mandatory and visible: do not treat the classification as an
+internal inference. Show a complete operation-by-operation table, including the
+proposed data source or dependency chain for every operation, and wait for an
+explicit user confirmation before writing any scan config changes.
 
 ### Classification overview
 
@@ -392,12 +487,20 @@ Detection heuristic:
 
 **C — User-data-required**
 Inputs cannot be resolved automatically and no plausible creator operation
-exists. If a Postman collection was provided in Step 2.5, use values from the
+exists. If a Postman collection was provided in Step 3, use values from the
 lookup table. Otherwise ask the user to provide the values directly.
 
 **D — Throwaway-user required**
 The operation destroys the currently authenticated principal's own resource
 (e.g. `DELETE /account`, `DELETE /users/me`, `DELETE /profile`).
+
+**Class-D requires the absence of a resource-identifying path parameter.** If the
+operation has a path parameter that names the target (e.g. `DELETE /users/{username}`,
+`DELETE /accounts/{accountId}`), it is NOT Class-D — the caller is naming an explicit
+target, not implicitly deleting themselves. Classify it as B or A instead, with a
+`before` block to seed the target resource if needed. Class-D applies only when the
+operation's sole implicit target is the authenticated user (no path parameter identifies
+a different resource).
 
 **Do NOT use `"skipped": true`** — the scanner ignores this field and will
 execute the operation against User1, deleting the primary test user and
@@ -438,7 +541,7 @@ DeleteUser             | B      | yes   | UserRegistration → /{userId}
 DeleteAccount          | D      | no    | register+login throwaway → delete throwaway
 ```
 
-**`BOLA? = yes` has a direct consequence in Step 4:** every operation marked as a BOLA candidate will receive an additional BOLA test scenario (using User 2's token) alongside its happy path scenario. Every operation marked as a BFLA candidate will receive a BFLA test scenario (using User 1's low-privilege token).
+**`BOLA? = yes` has a direct consequence in Step 6:** every operation marked as a BOLA candidate will receive an additional BOLA test scenario (using User 2's token) alongside its happy path scenario. Every operation marked as a BFLA candidate must run its happy path as admin (`auth: ["<SchemeName>/AdminToken"]`) and will receive a BFLA test scenario that replays the same request with User 1's low-privilege token.
 
 Output the classification explanation and table above as a chat message, then ask the user directly:
 - **question**: `"Does this classification look correct, or do you need to correct any misclassifications?"`
@@ -446,12 +549,33 @@ Output the classification explanation and table above as a chat message, then as
 
 ---
 
-## Step 4 — Build Scenario Chains
+## Step 6 — Build Scenario Chains
 
 For every Class-B operation, inject an operation-level `before` dependency step
 along-side the `happy.path` scenario. The `before` step creates or fetches the
 resource, while the `happy.path` step executes the target request. Show the user
 each proposed chain in plain English before writing it.
+
+Do not consider a Class-B operation fully configured unless the resulting scan
+config contains a `before` block that seeds the resource or extracts the
+required identifier. A BOLA authorization test alone is not a substitute for a
+dependency chain, and a static placeholder path value is not sufficient when a
+resource must be created or resolved first.
+
+#### `before` block rules:
+1. Always prefer to reference existing OAS operations in `before` blocks — avoid creating
+a utility request as a substitute. If an operation already exists in the spec
+(e.g. `UserRegistration`, `UserLogin`), use `"$ref": "#/operations/<OperationId>/request"`
+with `environment` overrides to supply different inputs. Only add an entry to
+the top-level `requests` section when no OAS operation covers the call.
+
+2. Mandatory variable wiring rule — if the referenced creator operation uses any
+template variables in `paths`, `queries`, `headers`, or `requestBody`, every
+`before` step that references it MUST resolve those variables. Use
+a step-level `environment` block unless the variables are already resolved
+globally via `environments.default.variables`, global static defaults, or a
+global `before` assignment. Do not rely on values supplied only in another
+scenario.
 
 ### Class-B: dependency chain pattern
 
@@ -462,6 +586,10 @@ each proposed chain in plain English before writing it.
   "before": [
     {
       "$ref": "#/operations/<CreatorOperationId>/request",
+      "environment": {
+        "<creatorVar1>": "<value1>",
+        "<creatorVar2>": "<value2>"
+      },
       "responses": {
         "<successCode>": {
           "expectations": { "httpStatus": <successCode> },
@@ -492,8 +620,17 @@ each proposed chain in plain English before writing it.
 }
 ```
 
+If no existing operation can reliably create or return the needed resource ID,
+stop and ask the user for the missing seed data or an alternate creator
+operation.
+
 The `<varName>` captured from the creator's response is then referenced as
 `{{varName}}` in the target operation's `paths` or `queries` array.
+
+Before running Step 8, verify each Class-B `before` chain is self-contained:
+- every referenced creator input variable is resolved either in that step's
+  `environment` or globally (`environments.default.variables` / global `before`);
+- no creator input depends only on another scenario's `environment` block;
 
 ### Global `before` block
 
@@ -522,7 +659,7 @@ block rather than repeating it in every scenario:
 
 ### Class-C: user-provided data
 
-If a Postman collection was imported in Step 2.5, look up the operation in
+If a Postman collection was imported in Step 3, look up the operation in
 the test data table and inject the extracted values as static literals in the
 `paths` / `queries` / `requestBody.json` fields of the operation's `request`
 block. If the operation is not in the table, ask the user to paste the values.
@@ -657,7 +794,7 @@ clean slate.
 
 ### BOLA authorization test pattern (BOLA? = yes operations)
 
-For every operation marked `BOLA? = yes` in the Step 3 table, register it
+For every operation marked `BOLA? = yes` in the Step 5 table, register it
 with the top-level `authorizationTests` entry. The scanner replaces the
 source credential with the target credential on an otherwise identical
 execution of the operation's happy path — including any `before` blocks
@@ -698,6 +835,23 @@ register it with a BFLA entry in `authorizationTests`. The scanner replaces
 the admin credential with the low-privilege credential on an otherwise
 identical execution of the operation's happy path.
 
+**Mandatory auth pinning for privileged operations:**
+Set the privileged operation's auth to the admin credential on the operation
+request definition itself. This ensures the baseline happy path executes as
+admin and the BFLA test is a true credential swap from admin to low-privilege.
+
+```json
+"<PrivilegedOperationId>": {
+  "operationId": "<PrivilegedOperationId>",
+  "request": {
+    "operationId": "<PrivilegedOperationId>",
+    "auth": ["<SchemeName>/AdminToken"],
+    "request": { ... }
+  },
+  ...
+}
+```
+
 **Step 1 — Define the authorization test (once, top-level):**
 
 ```json
@@ -723,9 +877,9 @@ identical execution of the operation's happy path.
 No additional scenario block is needed. A 2xx response on the BFLA
 authorization test is a confirmed BFLA finding.
 
-## Step 4.5 — Scan Config Validation Checkpoint
+## Step 7 — Scan Config Validation Checkpoint
 
-After all Step 2 to Step 4 edits are complete (credentials, operation
+After all Step 2 to Step 6 edits are complete (credentials, operation
 classification, scenario chains, and authorization test wiring), validate
 `CONF_FILE` again before running happy-path validation.
 
@@ -742,14 +896,14 @@ API_KEY="<value>" PLATFORM_HOST="<value>" <binary> scan conf validate <relative-
 ```
 
 Validation result handling:
-- `statusCode: 0` → continue to Step 5.
+- `statusCode: 0` → continue to Step 8.
 - Any non-zero status or schema errors (for example `unknown env from` paths)
   → fix config shape and re-run this checkpoint.
-- Do not run Step 5 until this checkpoint passes.
+- Do not run Step 8 until this checkpoint passes.
 
 ---
 
-## Step 5 — Happy Path Validation Run
+## Step 8 — Happy Path Validation Run
 
 Before running the full scan, validate all happy paths in strict mode.
 
@@ -867,7 +1021,7 @@ the full failure table first, then resolve one root cause type at a time.
 ### Postman collection fallback
 
 If an operation still fails with HTTP 400/422 after checking the already-loaded
-Step 2.5 lookup table (or no collection was provided), ask the user to supply
+Step 3 lookup table (or no collection was provided), ask the user to supply
 the values manually. Do not ask for a new Postman collection — if a collection
 was already imported, re-examine the existing lookup table entries for the
 failing operation before requesting manual input.
@@ -912,7 +1066,7 @@ Once all happy paths pass, set `happyPathOnly: false` before the full scan:
 
 ---
 
-## Step 5.5 — Permission Gate Before Full Scan
+## Step 9 — Permission Gate Before Full Scan
 
 All happy paths have passed. Before running the full security scan, ask the
 user for explicit consent. Ask the user directly:
@@ -920,11 +1074,11 @@ user for explicit consent. Ask the user directly:
 - **question**: `"All happy paths passed successfully. I'm ready to run the full security scan against <SCAN_TARGET_URL>. This will execute authorization tests (BOLA/BFLA) and conformance fuzzing across all <N> operations. Shall I proceed?"`
 - **options**: `["Yes — run the full scan", "No — stop here"]`
 
-Only proceed to Step 6 after explicit confirmation.
+Only proceed to Step 10 after explicit confirmation.
 
 ---
 
-## Step 6 — Full Scan
+## Step 10 — Full Scan
 
 Run the full scan, capturing output to a temp file for extraction:
 
@@ -967,9 +1121,13 @@ import json, re
 raw = open("/tmp/42c-scan-out.json").read()
 match = re.search(r'\{[\s\S]*\}', raw)
 if not match:
-    print("No JSON found in scan output"); exit(0)
+  print("No JSON found in scan output")
+  raise SystemExit(0)
 
 data = json.loads(match.group())
+report = data.get("report", {})
+summary = report.get("summary", {})
+
 sqg = "PASSED" if data.get("sqgPass") else ("FAILED" if "sqgPass" in data else "N/A")
 print(f"sqgPass: {sqg}")
 for d in data.get("sqgDetails", []):
@@ -977,19 +1135,64 @@ for d in data.get("sqgDetails", []):
     if rules:
         print(f"blockingRules[{len(rules)}]: {', '.join(rules)}")
 
-# Failing test results (structure varies by CLI version)
-results = data.get("results", data.get("scanResults", []))
-if isinstance(results, dict):
-    results = [results]
-failures = [
-    (r.get("operationId", r.get("path", "?")), t.get("testKey", "?"), t.get("severity", ""))
-    for r in results
-    for t in r.get("testResults", [])
-    if t.get("status") == "fail"
-]
+auth_summary = (((summary.get("authorizationTestRequests") or {}).get("executed") or {}).get("total"))
+issue_summary = (((summary.get("issues") or {}).get("total")))
+if auth_summary is not None:
+  print(f"authorizationRequests: {auth_summary}")
+if issue_summary is not None:
+  print(f"issuesTotal: {issue_summary}")
+
+def severity_from_criticality(value):
+  mapping = {
+    5: "critical",
+    4: "high",
+    3: "medium",
+    2: "low",
+    1: "info",
+    0: "info",
+  }
+  return mapping.get(value, "")
+
+failures = []
+operations = report.get("operations") or {}
+if isinstance(operations, dict):
+  for operation_id, operation in operations.items():
+    for section_name in ("authorizationRequestsResults", "conformanceRequestsResults", "customRequestsResults"):
+      for entry in operation.get(section_name, []) or []:
+        outcome = entry.get("outcome") or {}
+        if outcome.get("testSuccessful") is True:
+          continue
+        test = entry.get("test") or {}
+        severity = severity_from_criticality(outcome.get("criticality"))
+        failures.append((
+          operation_id,
+          test.get("key", "?"),
+          severity,
+        ))
+
+if not failures:
+  legacy_results = data.get("results", data.get("scanResults", []))
+  if isinstance(legacy_results, dict):
+    legacy_results = [legacy_results]
+  for result in legacy_results:
+    for test_result in result.get("testResults", []):
+      if test_result.get("status") == "fail":
+        failures.append((
+          result.get("operationId", result.get("path", "?")),
+          test_result.get("testKey", "?"),
+          test_result.get("severity", ""),
+        ))
+
 if failures:
-    print(f"\nfailures[{len(failures)}]{{operation,test,severity}}:")
-    for op, test, sev in failures:
+  unique_failures = []
+  seen = set()
+  for failure in failures:
+    if failure in seen:
+      continue
+    seen.add(failure)
+    unique_failures.append(failure)
+  print(f"\nfailures[{len(unique_failures)}]{{operation,test,severity}}:")
+  for op, test, sev in unique_failures:
         print(f"  {op},{test},{sev}")
 else:
     print("failures: none")
@@ -1002,6 +1205,8 @@ $raw = Get-Content "$env:TEMP\42c-scan-out.json" -Raw
 $jsonMatch = [regex]::Match($raw, '\{[\s\S]*\}')
 if (-not $jsonMatch.Success) { Write-Host "No JSON found in scan output"; exit }
 $data = $jsonMatch.Value | ConvertFrom-Json
+$report = if ($data.report) { $data.report } else { $null }
+$summary = if ($report -and $report.summary) { $report.summary } else { $null }
 $sqg = if ($null -ne $data.sqgPass) { if ($data.sqgPass) { 'PASSED' } else { 'FAILED' } } else { 'N/A' }
 Write-Host "sqgPass: $sqg"
 foreach ($d in $data.sqgDetails) {
@@ -1009,9 +1214,45 @@ foreach ($d in $data.sqgDetails) {
         Write-Host "blockingRules[$($d.blockingRules.Count)]: $($d.blockingRules -join ', ')"
     }
 }
+if ($summary -and $summary.authorizationTestRequests -and $summary.authorizationTestRequests.executed) {
+  Write-Host "authorizationRequests: $($summary.authorizationTestRequests.executed.total)"
+}
+if ($summary -and $summary.issues) {
+  Write-Host "issuesTotal: $($summary.issues.total)"
+}
+
+function Get-SeverityFromCriticality {
+  param([int]$criticality)
+  switch ($criticality) {
+    5 { 'critical' }
+    4 { 'high' }
+    3 { 'medium' }
+    2 { 'low' }
+    default { 'info' }
+  }
+}
+
+$failures = @()
+if ($report -and $report.operations) {
+  $report.operations.PSObject.Properties | ForEach-Object {
+    $opName = $_.Name
+    $op = $_.Value
+    foreach ($sectionName in @('authorizationRequestsResults', 'conformanceRequestsResults', 'customRequestsResults')) {
+      $entries = $op.$sectionName
+      if (-not $entries) { continue }
+      foreach ($entry in $entries) {
+        if ($entry.outcome -and $entry.outcome.testSuccessful -eq $true) { continue }
+        $testKey = if ($entry.test -and $entry.test.key) { $entry.test.key } else { '?' }
+        $severity = if ($entry.outcome) { Get-SeverityFromCriticality([int]$entry.outcome.criticality) } else { '' }
+        $failures += "$opName,$testKey,$severity"
+      }
+    }
+  }
+}
+
+if ($failures.Count -eq 0) {
 $results = if ($data.results) { $data.results } elseif ($data.scanResults) { $data.scanResults } else { @() }
 if ($results -is [PSCustomObject]) { $results = @($results) }
-$failures = @()
 foreach ($r in $results) {
     foreach ($t in $r.testResults) {
         if ($t.status -eq 'fail') {
@@ -1022,6 +1263,9 @@ foreach ($r in $results) {
         }
     }
 }
+}
+
+$failures = $failures | Select-Object -Unique
 if ($failures.Count -gt 0) {
     Write-Host "`nfailures[$($failures.Count)]{operation,test,severity}:"
     foreach ($f in $failures) { Write-Host "  $f" }
@@ -1030,10 +1274,10 @@ if ($failures.Count -gt 0) {
 }
 ```
 
-Use only the TOON output above when rendering Step 7. Do not load or display
+Use only the TOON output above when rendering Step 12. Do not load or display
 the raw scan output file content.
 
-## Step 6.5 — Database Reset Reminder (After Full Scan)
+## Step 11 — Database Reset Reminder (After Full Scan)
 
 The full scan (conformance fuzzing and authorization tests) has now completed.
 It may have made malformed requests, cross-user resource accesses (BOLA/BFLA),
@@ -1048,7 +1292,7 @@ and confirm when ready."`, then ask a second direct question:
 - **question**: `"Database reset complete?"`
 - **options**: `["Yes — ready to review results"]`
 
-Then proceed to Step 7.
+Then proceed to Step 12.
 
 ---
 
@@ -1071,12 +1315,17 @@ Then ask which (if any) findings the user wants to address.
 
 ---
 
-## Step 7 — Display Results and Apply Fixes
+## Step 12 — Display Results and Apply Fixes
 
-### 7a — Render the risk-classified findings report
+### 12a — Render the risk-classified findings report
 
 Before touching anything, display the full scan picture grouped into three tiers.
 Use plain-English descriptions — do not surface raw test keys or scan-report field names.
+
+Mandatory behavior:
+- The next user-visible output after Step 10 / 11 MUST be the full Step 12a report in the three-tier structure below.
+- A short prose summary, condensed recap, or partial listing does NOT satisfy 12a.
+- Render all three tiers every time, even when one or more tiers are `(none)`.
 
 **Platform mode header:**
 ```
@@ -1134,7 +1383,15 @@ If any BFLA finding was confirmed, add:
 
 ---
 
-### 7b — Determine fix candidates
+### 12b — Determine fix candidates
+
+Mandatory behavior:
+- Derive fix candidates only from the fully rendered Step 12a report and the blocking rules in `sqgDetails`.
+- Before calling 12c, explicitly assemble the candidate lists that will be referenced in the consent prompt:
+  - `authorization_fix_candidates`
+  - `sqg_blocking_conformance_fix_candidates` (platform mode only)
+  - `informational_conformance_findings`
+- If a tier is empty, say so explicitly; do not silently omit it.
 
 **Platform mode:**
 1. All **authorization failures** (BOLA/BFLA confirmed) → always a fix candidate.
@@ -1148,8 +1405,13 @@ If any BFLA finding was confirmed, add:
 2. There are no SQG-blocking conformance findings — all conformance findings are
    informational. Surface them to the user and ask which (if any) they want to fix.
 
-### 7c — Consent Gate
+### 12c — Consent Gate
 
+Mandatory behavior:
+- The very next action after completing 12b MUST be asking the user directly for permission to apply the fixes.
+- Do not apply fixes, show diffs, or ask for approval on any individual fix before this gate returns.
+- If the user chooses `Show me the diff first`, stay in Step 12c until each proposed change is shown and individually approved or skipped.
+- If the user chooses `No`, stop remediation and proceed only with summary/reporting.
 **Platform mode** — ask the user directly:
 - **question**: `"Here is the complete scan report (shown above). I can apply the following fixes to <filename>: 🔴 Authorization fixes: [list] 🟠 SQG-blocking conformance fixes: [list]. The 🟡 informational findings are not SQG-blocking and will not be fixed automatically — let me know if you'd like to address any of them too. What would you like to do?"`
 - **options**: `["Yes — apply all fixes now", "Show me the diff first", "No — skip fixes for now"]`
@@ -1166,7 +1428,7 @@ Only advance to the next fix after the user confirms the current one.
 
 Only apply fixes after explicit user confirmation.
 
-### 7d — Apply fixes
+### 12d — Apply fixes
 
 | Finding type | Fix action |
 |---|---|
@@ -1174,27 +1436,27 @@ Only apply fixes after explicit user confirmation.
 | SQG-blocking conformance | Correct response schemas, required fields, or parameter definitions to align the OAS with actual API behaviour |
 | Non-SQG-blocking conformance (any severity) | Surface only; ask user if they want to address them |
 
-### 7e — Server-side / Implementation Fixes
+### 12e — Server-side / Implementation Fixes
 
-OAS fixes document the contract but do not secure the API. Every SQG-blocking finding has a root cause in the server-side code. After 7d, continue to 7e to locate and fix the implementation.
+OAS fixes document the contract but do not secure the API. Every SQG-blocking finding has a root cause in the server-side code. After 12d, continue to 12e to locate and fix the implementation.
 
-#### 7e-1 — Gate
+#### 12e-1 — Gate
 
-Trigger 7e for every confirmed finding that is SQG-blocking:
+Trigger 12e for every confirmed finding that is SQG-blocking:
 - 🔴 Authorization failures (BOLA / BFLA confirmed)
 - 🟠 Conformance findings matched in `sqgDetails[].blockingRules`
 
-Skip 7e entirely only when the scan has zero SQG-blocking findings.
+Skip 12e entirely only when the scan has zero SQG-blocking findings.
 
-#### 7e-2 — Consent gate for code fixes
+#### 12e-2 — Consent gate for code fixes
 
 Ask the user directly:
 - **question**: `"The OAS has been updated. The following SQG-blocking issues also require server-side code fixes — the API implementation is the root cause. Should I locate and fix the code? <list all SQG-blocking findings by operation>"`
 - **options**: `["Yes — find and fix the code", "Show me the relevant code first", "No — skip code fixes"]`
 
-If **"Show me the relevant code first"** is chosen, locate each handler (step 7e-3) and display the relevant code block without making any changes, then ask the user again with the same options to proceed.
+If **"Show me the relevant code first"** is chosen, locate each handler (step 12e-3) and display the relevant code block without making any changes, then ask the user again with the same options to proceed.
 
-#### 7e-3 — Locate route handlers
+#### 12e-3 — Locate route handlers
 
 For each SQG-blocking finding:
 
@@ -1204,7 +1466,7 @@ For each SQG-blocking finding:
 4. Report: `"Found handler for <METHOD> <path> in <file>:<line>."`
 5. If no handler is found after the widened search, report it as not found and skip the fix for that operation — do not block the remaining fixes.
 
-#### 7e-4 — Apply fix by finding type
+#### 12e-4 — Apply fix by finding type
 
 | Finding type | Root cause to look for in the code | Server-side fix |
 |---|---|---|
@@ -1216,14 +1478,14 @@ For each SQG-blocking finding:
 | **Conformance — wrong or missing Content-Type / headers** | Handler does not set the `Content-Type` or other response headers required by the OAS | Add the required headers to the response |
 | **Conformance — schema type/format mismatch** | Handler returns a field with a different type or format than declared (e.g., returns a string where the OAS declares integer) | Coerce or cast the field to the declared type/format in the serializer or handler |
 
-#### 7e-5 — Diff and confirm before writing
+#### 12e-5 — Diff and confirm before writing
 
 For each proposed code change, display it in unified diff format and ask the user directly:
 - **question**: `"Apply this fix to <file>?"` — **options**: `["Yes", "No — skip this one"]`
 
 Only write the change after explicit confirmation. Advance to the next finding only after the current one is confirmed or skipped.
 
-#### 7e-6 — Summary
+#### 12e-6 — Summary
 
 After all code fixes are applied or skipped, append to the final output:
 
@@ -1233,6 +1495,66 @@ After all code fixes are applied or skipped, append to the final output:
   Skipped: <k> issue(s) (user declined or handler not found)
 ─────────────────────────────────────────────────────────────────────────
 ```
+
+### 12f — Permission Gate Before Verification Scan
+
+After Step 12e is complete (all server-side fixes applied or skipped), ask the
+user whether they want to run the final verification scan before the final
+scan summary is presented.
+
+Ask the user directly:
+- **question**: `"Would you like me to run a final verification scan after the code fixes?"`
+- **options**: `["Yes — run the verification scan", "No — skip it and continue to the final scan summary"]`
+
+If the user selects **No**:
+- Continue directly to the final scan summary output.
+
+If the user selects **Yes**:
+- Continue to Step 12g.
+
+### 12g — Optional API Restart Before Verification Scan
+
+Ask whether the API needs to be restarted for the code fixes to take effect.
+
+Ask the user directly:
+- **question**: `"Do you need to restart the API for the code fixes to take effect?"`
+- **options**: `["No — run the scan now", "Yes — I need to restart it first"]`
+
+If the user selects **No**:
+- Run the verification scan using the Step 10 command for the active mode, then continue to Step 12h.
+
+If the user selects **Yes**:
+- Ask a follow-up question:
+  - **question**: `"Have you restarted the API?"`
+  - **options**: `["Yes — run the scan now", "No — not yet"]`
+- If the user selects **Yes**:
+  - Run the verification scan using the Step 10 command for the active mode, then continue to Step 12h.
+- If the user selects **No**:
+  - Wait for the API to be restarted, then ask the same question again.
+
+### 12h — Post-Verification Checkpoint
+
+After the verification scan completes, check `sqgPass` from the scan output.
+
+**If `sqgPass: true` (SQG passed):**
+- Proceed directly to the final scan summary output.
+
+**If `sqgPass: false` (SQG still failing):**
+
+Display the updated findings report (same three-tier structure from Step 12a) reflecting the verification scan results.
+
+Then ask the user directly:
+- **question**: `"The SQG is still failing after applying fixes. Would you like me to address more issues, or finish here and review the final summary?"`
+- **options**: `["Yes — fix more issues", "No — present the final scan summary"]`
+
+If the user selects **Yes — fix more issues**:
+- Re-enter the fix loop starting at Step 12b (determine new fix candidates from the verification scan results), then 12c → 12d → 12e → 12f → 12g → 12h.
+- Continue this loop until either `sqgPass: true` or the user selects **No** at this checkpoint.
+
+If the user selects **No — present the final scan summary**:
+- Proceed to the final scan summary output.
+
+**Free Trial mode**: `sqgPass` is always `true` or absent — Step 12h is a no-op; proceed directly to the final scan summary output.
 
 ---
 
