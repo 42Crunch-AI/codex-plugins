@@ -13,7 +13,7 @@ The official [42Crunch](https://www.42crunch.com) plugin marketplace for Codex â
 docs/                           # Repository-level documentation assets
   images/                       # Screenshots and diagrams used in READMEs
 plugins/                        # Codex plugins developed by 42Crunch
-  api-security-testing/
+  42crunch-api-security-testing/
     skills/                     # Skill definitions
     references/                 # Reference definitions
     README.md                   # Documentation
@@ -41,10 +41,10 @@ After the marketplace is added:
 - If your Codex build supports plugin installation from the CLI, install with:
 
 ```
-codex plugin install api-security-testing@42crunch-marketplace
+codex plugin install 42crunch-api-security-testing@42crunch-marketplace
 ```
 
-- If your Codex build only exposes `codex plugin marketplace ...` commands, open the Codex app/UI and install `api-security-testing` from the `42Crunch` marketplace there.
+- If your Codex build only exposes `codex plugin marketplace ...` commands, open the Codex app/UI and install `42crunch-api-security-testing` from the `42Crunch` marketplace there.
 
 ### Via the Codex Application (UI)
 
@@ -64,13 +64,13 @@ codex plugin install api-security-testing@42crunch-marketplace
 
 ## Available Plugins
 
-### [api-security-testing](./plugins/api-security-testing/)
+### [42crunch-api-security-testing](./plugins/42crunch-api-security-testing/)
 
 AI-powered API security plugin backed by 42Crunch. Audit OpenAPI specs, detect OWASP API Security vulnerabilities (including BOLA/BFLA), run live conformance and authorization scans against running APIs, and apply AI-assisted fixes â€” all through natural language.
 
-**Install:** add the marketplace, then install `api-security-testing` from the CLI if supported, or from the Codex UI if your build does not expose `codex plugin install`.
+**Install:** add the marketplace, then install `42crunch-api-security-testing` from the CLI if supported, or from the Codex UI if your build does not expose `codex plugin install`.
 
-See the [plugin README](./plugins/api-security-testing/README.md) for full documentation and [RECIPES.md](./plugins/api-security-testing/RECIPES.md) for common scenario guides.
+See the [plugin README](./plugins/42crunch-api-security-testing/README.md) for full documentation and [RECIPES.md](./plugins/42crunch-api-security-testing/RECIPES.md) for common scenario guides.
 
 ## Plugin Installation (UI)
 
