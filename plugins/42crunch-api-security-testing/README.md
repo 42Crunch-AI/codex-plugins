@@ -4,7 +4,7 @@ Automate API security directly in Codex with 42Crunch - audit OpenAPI specs, det
 
 ## Overview
 
-The `api-security-testing` plugin is designed for AI-assisted development workflows, it provides continuous guardrails through an **audit->scan->remediate->validate** loop, ensuring APIs meet enterprise security standards before deployment.
+The `42crunch-api-security-testing` plugin is designed for AI-assisted development workflows, it provides continuous guardrails through an **audit->scan->remediate->validate** loop, ensuring APIs meet enterprise security standards before deployment.
 
 ## Commands
 
@@ -41,17 +41,17 @@ For a local checkout:
 codex plugin marketplace add /absolute/path/to/codex-plugins
 ```
 
-Install the `api-security-testing` plugin:
+Install the `42crunch-api-security-testing` plugin:
 
 ```
-codex plugin install api-security-testing@42crunch-marketplace
+codex plugin install 42crunch-api-security-testing@42crunch-marketplace
 ```
 
-If your Codex CLI does not expose `codex plugin install`, open the Codex app/UI and install `api-security-testing` from the `42Crunch` marketplace there after adding the marketplace.
+If your Codex CLI does not expose `codex plugin install`, open the Codex app/UI and install `42crunch-api-security-testing` from the `42Crunch` marketplace there after adding the marketplace.
 
 ## Quick Start
 
-1. **Install the plugin** — add this marketplace to Codex, then install `api-security-testing` from the CLI if supported or from the Codex UI.
+1. **Install the plugin** — add this marketplace to Codex, then install `42crunch-api-security-testing` from the CLI if supported or from the Codex UI.
 2. **Set up the environment** — say: *"set up 42crunch"*
 3. **Audit your API** — say: *"run a 42Crunch audit"* (Codex will offer to generate an OAS from source code if you don't have one)
 4. **Fix issues** — Codex presents findings by severity and asks your consent before changing anything

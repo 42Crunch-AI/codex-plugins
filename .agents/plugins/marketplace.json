@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "api-security-testing",
+      "name": "42crunch-api-security-testing",
       "source": {
         "source": "local",
-        "path": "./plugins/api-security-testing"
+        "path": "./plugins/42crunch-api-security-testing"
       },
       "policy": {
         "installation": "AVAILABLE",
