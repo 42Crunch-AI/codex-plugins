@@ -5,6 +5,7 @@
 > - **Never write a literal credential value into a command.** Load credentials from the conf file into the environment first, then let the command inherit them — the raw value must never appear in a command string, tool output, or chat message.
 > - **Platform mode**: before every command, load credentials — macOS/Linux: `set -a; . "$HOME/.42crunch/conf/env"; set +a`; Windows: `Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }`. The command then inherits `API_KEY`/`PLATFORM_HOST` — no explicit prefix needed.
 > - **Token mode**: load `TRIAL_TOKEN` the same way, then add `--freemium-host stateless.42crunch.com:443` and `--token "$TRIAL_TOKEN"` (macOS/Linux) or `--token $env:TRIAL_TOKEN` (Windows) to every command — never the literal token.
+> - **User agent (usage metrics)**: every `42c-ast` command in this file must carry `--user-agent "$USER_AGENT"` (macOS/Linux) or `--user-agent $UserAgent` (Windows) so 42Crunch can attribute usage to this integration. Format: `42Crunch-Codex-<source>/<binary-version>` (e.g. `42Crunch-Codex-VSCode/3.57.0`) — the value never contains secrets. `<source>` is derived from `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` (set by the Codex IDE extension and SDK in the environment Codex passes to shell commands): `codex_vscode` / `codex_vscode_copilot` → `VSCode`; any other non-empty value is passed through with the `codex_`/`codex-` prefix stripped and non-alphanumerics removed (e.g. `codex_sdk_ts` → `sdkts`), so new Codex surfaces appear in metrics without a plugin update; when unset, `CODEX_PROXY_CERT` (present in Codex Cloud containers) → `Cloud`, otherwise → `CLI`. Compute it in the same shell invocation as the command, right after loading credentials — macOS/Linux: `UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac); USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"`; Windows: `$UaSrc = if ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -in @('codex_vscode','codex_vscode_copilot')) { 'VSCode' } elseif ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE) { $env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -replace '^codex[_-]','' -replace '[^A-Za-z0-9]','' } elseif ($env:CODEX_PROXY_CERT) { 'Cloud' } else { 'CLI' }; if (-not $UaSrc) { $UaSrc = 'CLI' }` then `$UserAgent = "42Crunch-Codex-$UaSrc/$(((& <binary> --version) | Select-String '\d+\.\d+\.\d+' | Select-Object -First 1).Matches[0].Value)"`. If a command fails with `unknown flag: --user-agent` (a binary older than 3.57.0 that could not be updated), retry it once without the flag — usage metrics must never block a run.
 > - **OAS analysis is done once, in the calling skill.** The skill's scan-preview step already extracted the operation count, auth scheme types, BOLA/BFLA candidates, and sample-data presence. Reuse those results throughout Steps 2–5 — do not re-read the OAS to re-derive facts already established this conversation. Open the OAS only to look up detail not yet extracted (e.g. a specific operation's schema or examples).
 > - **PowerShell string quoting**: when a variable is immediately followed by `:` inside a double-quoted string, PowerShell parses `$varName:` as a PSDrive reference (like `$env:TEMP`) and throws `InvalidVariableReferenceWithDrive`. Always use `${varName}` to delimit the name — e.g. `"${opName}: ..."` not `"$opName: ..."`. This applies to any inline PowerShell generated during the session, not just the static snippets below.
 
@@ -76,7 +77,10 @@ Check whether `.42c/scan/<alias>/scanconf.json` exists **on disk**.
   ```bash
   # Platform mode
   set -a; . "$HOME/.42crunch/conf/env"; set +a
+  UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+  USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   <binary> scan conf generate \
+    --user-agent "$USER_AGENT" \
     --output-format json \
     --output .42c/scan/<alias>/scanconf.json \
     [--tag <category>:<tag>] \
@@ -84,7 +88,10 @@ Check whether `.42c/scan/<alias>/scanconf.json` exists **on disk**.
 
   # Token mode
   set -a; . "$HOME/.42crunch/conf/env"; set +a
+  UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+  USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
   <binary> scan conf generate \
+    --user-agent "$USER_AGENT" \
     --freemium-host stateless.42crunch.com:443 \
     --token "$TRIAL_TOKEN" \
     --output-format json \
@@ -157,12 +164,18 @@ etc.), run the **single Step 1 validation checkpoint**:
 ```bash
 # Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 <binary> scan conf validate <relative-oas-path> \
+  --user-agent "$USER_AGENT" \
   --conf-file <CONF_FILE>
 
 # Token mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 <binary> scan conf validate <relative-oas-path> \
+  --user-agent "$USER_AGENT" \
   --freemium-host stateless.42crunch.com:443 \
   --token "$TRIAL_TOKEN" \
   --conf-file <CONF_FILE>
@@ -756,12 +769,18 @@ re-validating an unchanged file is a wasted network call.
 ```bash
 # Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 <binary> scan conf validate <relative-oas-path> \
+  --user-agent "$USER_AGENT" \
   --conf-file <CONF_FILE>
 
 # Token mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 <binary> scan conf validate <relative-oas-path> \
+  --user-agent "$USER_AGENT" \
   --freemium-host stateless.42crunch.com:443 \
   --token "$TRIAL_TOKEN" \
   --conf-file <CONF_FILE>
@@ -794,12 +813,16 @@ operations with failing happy paths, producing a cascade of false positives.
 ```bash
 # macOS / Linux — Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
-<binary> scan run --enrich=false \
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+<binary> scan run --enrich=false --user-agent "$USER_AGENT" \
   <relative-oas-path> --conf-file <CONF_FILE> > /tmp/42c-happy-out.json 2>&1
 
 # macOS / Linux — Token mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
-<binary> scan run --enrich=false <relative-oas-path> \
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+<binary> scan run --enrich=false --user-agent "$USER_AGENT" <relative-oas-path> \
   --freemium-host stateless.42crunch.com:443 \
   --token "$TRIAL_TOKEN" --conf-file <CONF_FILE> > /tmp/42c-happy-out.json 2>&1
 ```
@@ -807,12 +830,18 @@ set -a; . "$HOME/.42crunch/conf/env"; set +a
 ```powershell
 # Windows — Platform mode
 Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false <relative-oas-path> --conf-file <CONF_FILE> `
+$UaSrc = if ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -in @('codex_vscode','codex_vscode_copilot')) { 'VSCode' } elseif ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE) { $env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -replace '^codex[_-]','' -replace '[^A-Za-z0-9]','' } elseif ($env:CODEX_PROXY_CERT) { 'Cloud' } else { 'CLI' }
+if (-not $UaSrc) { $UaSrc = 'CLI' }
+$UserAgent = "42Crunch-Codex-$UaSrc/$(((& <binary> --version) | Select-String '\d+\.\d+\.\d+' | Select-Object -First 1).Matches[0].Value)"
+& <binary> scan run --enrich=false --user-agent $UserAgent <relative-oas-path> --conf-file <CONF_FILE> `
   > "$env:TEMP\42c-happy-out.json" 2>&1
 
 # Windows — Token mode
 Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false <relative-oas-path> `
+$UaSrc = if ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -in @('codex_vscode','codex_vscode_copilot')) { 'VSCode' } elseif ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE) { $env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -replace '^codex[_-]','' -replace '[^A-Za-z0-9]','' } elseif ($env:CODEX_PROXY_CERT) { 'Cloud' } else { 'CLI' }
+if (-not $UaSrc) { $UaSrc = 'CLI' }
+$UserAgent = "42Crunch-Codex-$UaSrc/$(((& <binary> --version) | Select-String '\d+\.\d+\.\d+' | Select-Object -First 1).Matches[0].Value)"
+& <binary> scan run --enrich=false --user-agent $UserAgent <relative-oas-path> `
   --freemium-host stateless.42crunch.com:443 `
   --token $env:TRIAL_TOKEN --conf-file <CONF_FILE> `
   > "$env:TEMP\42c-happy-out.json" 2>&1
@@ -960,12 +989,16 @@ Run the full scan, capturing output to a temp file for extraction:
 ```bash
 # macOS / Linux — Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
-<binary> scan run --enrich=false --report-sqg \
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+<binary> scan run --enrich=false --report-sqg --user-agent "$USER_AGENT" \
   <relative-oas-path> --conf-file <CONF_FILE> > /tmp/42c-scan-out.json 2>&1
 
 # macOS / Linux — Token mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
-<binary> scan run --enrich=false <relative-oas-path> \
+UA_SRC=$(case "${CODEX_INTERNAL_ORIGINATOR_OVERRIDE:-}" in (codex_vscode|codex_vscode_copilot) echo VSCode ;; ("") if [ -n "$CODEX_PROXY_CERT" ]; then echo Cloud; else echo CLI; fi ;; (*) printf '%s' "$CODEX_INTERNAL_ORIGINATOR_OVERRIDE" | sed 's/^codex[_-]//; s/[^A-Za-z0-9]//g' ;; esac)
+USER_AGENT="42Crunch-Codex-${UA_SRC:-CLI}/$("<binary>" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+<binary> scan run --enrich=false --user-agent "$USER_AGENT" <relative-oas-path> \
   --freemium-host stateless.42crunch.com:443 \
   --token "$TRIAL_TOKEN" --conf-file <CONF_FILE> > /tmp/42c-scan-out.json 2>&1
 ```
@@ -973,12 +1006,18 @@ set -a; . "$HOME/.42crunch/conf/env"; set +a
 ```powershell
 # Windows — Platform mode
 Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false --report-sqg <relative-oas-path> --conf-file <CONF_FILE> `
+$UaSrc = if ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -in @('codex_vscode','codex_vscode_copilot')) { 'VSCode' } elseif ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE) { $env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -replace '^codex[_-]','' -replace '[^A-Za-z0-9]','' } elseif ($env:CODEX_PROXY_CERT) { 'Cloud' } else { 'CLI' }
+if (-not $UaSrc) { $UaSrc = 'CLI' }
+$UserAgent = "42Crunch-Codex-$UaSrc/$(((& <binary> --version) | Select-String '\d+\.\d+\.\d+' | Select-Object -First 1).Matches[0].Value)"
+& <binary> scan run --enrich=false --report-sqg --user-agent $UserAgent <relative-oas-path> --conf-file <CONF_FILE> `
   > "$env:TEMP\42c-scan-out.json" 2>&1
 
 # Windows — Token mode
 Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false <relative-oas-path> `
+$UaSrc = if ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -in @('codex_vscode','codex_vscode_copilot')) { 'VSCode' } elseif ($env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE) { $env:CODEX_INTERNAL_ORIGINATOR_OVERRIDE -replace '^codex[_-]','' -replace '[^A-Za-z0-9]','' } elseif ($env:CODEX_PROXY_CERT) { 'Cloud' } else { 'CLI' }
+if (-not $UaSrc) { $UaSrc = 'CLI' }
+$UserAgent = "42Crunch-Codex-$UaSrc/$(((& <binary> --version) | Select-String '\d+\.\d+\.\d+' | Select-Object -First 1).Matches[0].Value)"
+& <binary> scan run --enrich=false --user-agent $UserAgent <relative-oas-path> `
   --freemium-host stateless.42crunch.com:443 `
   --token $env:TRIAL_TOKEN --conf-file <CONF_FILE> `
   > "$env:TEMP\42c-scan-out.json" 2>&1
