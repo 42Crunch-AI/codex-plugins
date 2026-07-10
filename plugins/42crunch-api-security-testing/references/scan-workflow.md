@@ -3,10 +3,29 @@
 > **Command conventions used throughout this file**
 > - `<binary>` — the full path resolved during binary discovery (e.g. `~/.42crunch/bin/42c-ast`). Never call `42c-ast` by name alone unless it is confirmed to be on PATH.
 > - **Never write a literal credential value into a command.** Load credentials from the conf file into the environment first, then let the command inherit them — the raw value must never appear in a command string, tool output, or chat message.
-> - **Platform mode**: before every command, load credentials — macOS/Linux: `set -a; . "$HOME/.42crunch/conf/env"; set +a`; Windows: `Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }`. The command then inherits `API_KEY`/`PLATFORM_HOST` — no explicit prefix needed.
-> - **Token mode**: load `TRIAL_TOKEN` the same way, then add `--freemium-host stateless.42crunch.com:443` and `--token "$TRIAL_TOKEN"` (macOS/Linux) or `--token $env:TRIAL_TOKEN` (Windows) to every command — never the literal token.
+> - **Platform mode**: before every command, load credentials with `set -a; . "$HOME/.42crunch/conf/env"; set +a`. The command then inherits `API_KEY`/`PLATFORM_HOST` — no explicit prefix needed.
+> - **Token mode**: load `TRIAL_TOKEN` the same way, then add `--freemium-host stateless.42crunch.com:443` and `--token "$TRIAL_TOKEN"` to every command — never the literal token.
+> - **Windows**: all command/extraction blocks in this file are macOS/Linux; use the PowerShell equivalents in `./windows-commands.md` (keyed by step), including its credential-loading and string-quoting conventions.
 > - **OAS analysis is done once, in the calling skill.** The skill's scan-preview step already extracted the operation count, auth scheme types, BOLA/BFLA candidates, and sample-data presence. Reuse those results throughout Steps 2–5 — do not re-read the OAS to re-derive facts already established this conversation. Open the OAS only to look up detail not yet extracted (e.g. a specific operation's schema or examples).
-> - **PowerShell string quoting**: when a variable is immediately followed by `:` inside a double-quoted string, PowerShell parses `$varName:` as a PSDrive reference (like `$env:TEMP`) and throws `InvalidVariableReferenceWithDrive`. Always use `${varName}` to delimit the name — e.g. `"${opName}: ..."` not `"$opName: ..."`. This applies to any inline PowerShell generated during the session, not just the static snippets below.
+> - **Runtime overrides via `SCAN42C_*` env vars (do not edit the scan config for these).** `scan run` reads its whole `runtimeConfiguration` from the environment, so behaviour that varies per run is set with an env var prefixed on the command — never by mutating the committed `scanconf.json`. This workflow uses three (each scoped to the single command; a fresh shell per invocation means they never leak to the next run): `SCAN42C_HAPPY_PATH_ONLY=true` (happy-path validation run only — replaces toggling `happyPathOnly` in the config), `SCAN42C_REPORT_GENERATE_CURL_COMMAND=false` (every run — drops the per-request curl strings the workflow never reads), and `SCAN42C_REPORT_ISSUES_ONLY=true` (full scan only — ~23% smaller report; keeps happy-path scenarios and their `response.rawPayload`, keeps failing/defective conformance and authorization results, drops only the passing test details the extraction already discards). Prefix `VAR=value` before `<binary>` (Windows form: `./windows-commands.md`).
+
+---
+
+## Status handling (all `42c-ast` commands)
+
+Every command prints a status object (`{statusCode, statusMessage, ...}`) — in
+the status file for `scan run` (`--output` runs), or on stdout for others. Map
+it before touching any report; do not assume a non-zero code means an invalid
+spec/config:
+
+| statusCode / statusMessage | Meaning | Action |
+|---|---|---|
+| `0` / `success` | OK | Proceed. |
+| `3` / `limits_reached` | Token plan quota hit (Token mode) | Follow `./token-limit.md`. Do not retry. |
+| `unauthorized` / `forbidden` | Credentials invalid, expired, or lacking access to this API/tag | Tell the user their key/token was rejected; suggest re-running `42crunch-setup`. Do not retry with the same credentials. |
+| `timeout` | Platform or scan target unreachable/slow | Surface as a connectivity issue (check the target URL / network), not a spec error. |
+| `2` / `unknown_error` | Malformed input **or an unsupported/misspelled flag** (the binary reports both this way) | Re-check the exact command flags first; if the flags are correct, treat as a malformed spec/config and surface `statusMessage`. |
+| `invalid_contract` / `invalid_input` / other non-zero | The OAS/scanconf is malformed | Surface `statusMessage` and stop; fix the definition. |
 
 ---
 
@@ -36,9 +55,16 @@ Walk upward from `GIT_ROOT` looking for `.42c/conf.yaml`.
 - Extract the `alias` value for that path.
 
 **If `.42c/conf.yaml` does not exist or the OAS path is not in it:**
-- Derive an alias from `info.title` in the OAS file: lowercase, replace spaces/underscores/special characters with hyphens, collapse consecutive hyphens, strip leading/trailing hyphens.
-  - Example: `info.title: "My Banking API"` → `my-banking-api`, `info.title: "Vulnerable API v2"` → `vulnerable-api-v2`
-  - If `info.title` is absent or empty, fall back to the OAS filename stem using the same transformation rules.
+- Derive the alias with the bundled helper (reads only `info.title`, so a large
+  OAS never enters context; falls back to the filename stem, applies the
+  canonical lowercase/hyphenate transform):
+  ```bash
+  python3 "<scripts>/scanconf_bootstrap.py" alias <relative-oas-path>
+  ```
+  *Windows without python3:* apply the transform by hand — lowercase, replace
+  spaces/underscores/special characters with hyphens, collapse consecutive
+  hyphens, strip leading/trailing hyphens (e.g. `"My Banking API"` →
+  `my-banking-api`).
 - Add (or create) the entry in `$GIT_ROOT/.42c/conf.yaml`:
   ```yaml
   apis:
@@ -106,39 +132,48 @@ Check whether `.42c/scan/<alias>/scanconf.json` exists **on disk**.
 - On first `scan conf generate`, the generated `environments.default.variables`
   includes one variable per OpenAPI security scheme (for example bearer auth,
   oauth2, apiKey, or basic auth variables) typically with `"required": true`.
-  - Normalize these generated security-related variables to `"required": false`
-    before proceeding, unless the user explicitly wants strict required inputs.
+  Normalize them to `"required": false` (unless the user explicitly wants strict
+  required inputs) with the linter's fix mode:
+  ```bash
+  python3 "<scripts>/scanconf_lint.py" <CONF_FILE> --fix-required
+  ```
+  It flips every `required: true` variable to `false` in place and prints which
+  it changed. *Windows without python3:* edit each generated security-scheme
+  variable's `"required"` to `false` by hand.
 - The generated `authenticationDetails` is also initialized with one default credential
   per OpenAPI security scheme defined in the OAS (for example bearer, oauth2, basic, or apiKey).
   - Use this generated default credential as the User 1 credential for that
     scheme. Update/wire that default entry as needed; do not create an additional
     User 1 credential unless the user explicitly asks for multiple primary
     identities.
-- Set `runtimeConfiguration.reportGenerateCurlCommand` to `false`. The binary
-  generates it as `true`, which embeds a full curl string in every test
-  request — roughly 9% of the report's bytes — that this workflow never reads
-  (body-aware authorization confirmation in Step 12a-0 uses `response.rawPayload`,
-  not the curl field). Turning it off shrinks the report file and speeds parsing
-  at no cost to any step.
-  ```json
-  "reportGenerateCurlCommand": false
-  ```
+
+Do **not** edit `runtimeConfiguration` in the generated config for report
+trimming or happy-path gating — those are applied per run via `SCAN42C_*` env
+vars (see the Runtime overrides convention in the header, and Steps 8/10). The
+committed `scanconf.json` stays canonical.
 
 ### 1c — Write target URL to config
 
 Write `SCAN_TARGET_URL` (confirmed in the skill's URL resolution step) into
-`environments.default.variables.host` in `CONF_FILE`. No URL resolution or
-user prompting is needed here — the URL was already confirmed and reachability
-checked before the workflow started.
+`environments.default.variables.host` with the bundled helper — it writes the
+correct object shape (SCAN42C_HOST source strategy) in place:
+
+```bash
+python3 "<scripts>/scanconf_bootstrap.py" set-host <CONF_FILE> "<SCAN_TARGET_URL>"
+```
+
+No URL resolution or user prompting is needed here — the URL was already
+confirmed and reachability checked before the workflow started.
+*Windows without python3:* write the `host` block by hand using the object
+shape below.
 
 Important schema rule for `environments.default.variables`:
 - Variable entries must be objects with a source strategy, not raw string literals.
-- Keep generated security-scheme variables optional for scan execution — set `"required": false`
-  for each generated security-scheme variable in `environments.default.variables`.
+- Keep generated security-scheme variables optional for scan execution (the
+  `--fix-required` step in 1b already did this).
 - For values used by operation templates (for example `{{username}}`, `{{password}}`),
   add entries under `environments.default.variables` using `"from": "environment"`
-  with both `"name"` and `"required": false`.
-- Use this shape for scan variables:
+  with both `"name"` and `"required": false`. Use this shape:
   ```json
   "host": {
     "name": "SCAN42C_HOST",
@@ -161,7 +196,15 @@ Important schema rule for `environments.default.variables`:
   ```
 
 After writing `SCAN_TARGET_URL` (and any other Step 1 edits — normalization,
-etc.), run the **single Step 1 validation checkpoint**:
+etc.), **lint the config locally first, then** run the single Step 1 network
+validation checkpoint. The lint catches structural mistakes without spending a
+network round-trip:
+
+```bash
+python3 "<scripts>/scanconf_lint.py" <CONF_FILE>
+```
+
+Fix any `ERROR` lines before validating (a `WARN` is advisory). Then:
 
 ```bash
 # Platform mode
@@ -762,6 +805,17 @@ Step 1c checkpoint passed (rare — no auth schemes, no Class-B/C/D operations,
 no authorization tests), skip this checkpoint and go straight to Step 8 —
 re-validating an unchanged file is a wasted network call.
 
+**Lint locally first** — Steps 2–6 make the heaviest edits (auth wiring,
+scenario chains, authorization tests), so run the structural linter before the
+network validate and fix any `ERROR` (inline requests, `defaultResponse`
+mismatch, `skipped:true`, string variables) it reports:
+
+```bash
+python3 "<scripts>/scanconf_lint.py" <CONF_FILE>
+```
+
+Then run the network validation checkpoint:
+
 ```bash
 # Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
@@ -790,11 +844,10 @@ Before running the full scan, validate all happy paths in strict mode.
 
 ### Configure and run
 
-Set `happyPathOnly: true` in `runtimeConfiguration`:
-
-```json
-"happyPathOnly": true
-```
+Gate this run to happy paths with the `SCAN42C_HAPPY_PATH_ONLY=true` env var
+(prefixed on the command below) — do **not** edit `happyPathOnly` in the
+config. The generated config keeps its default (`false`); the full scan in
+Step 10 runs without the env var and so fuzzes normally.
 
 Leave `laxTestingModeEnabled` at its generated default (`false`). Never set it
 to `true` before happy paths are confirmed — in lax mode, fuzzing runs even on
@@ -804,101 +857,40 @@ Write the report to a file with `--output` (clean, directly parseable JSON);
 the small status object — `statusCode`, `statusMessage`, `sqgPass`,
 `sqgDetails` — prints to stdout, so redirect it to a separate status file. Do
 **not** use `2>&1`: the binary emits its logs inside the stdout JSON object
-(`logs[]`), not to stderr, so the status file stays pure JSON. This replaces
-the old single-stream capture that required regex-extracting JSON from a
-1.6MB+ log-contaminated blob.
+(`logs[]`), not to stderr, so the status file stays pure JSON.
 
 ```bash
 # macOS / Linux — Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+SCAN42C_HAPPY_PATH_ONLY=true SCAN42C_REPORT_GENERATE_CURL_COMMAND=false \
 <binary> scan run --enrich=false \
   --output /tmp/42c-happy-report.json --output-format json \
   <relative-oas-path> --conf-file <CONF_FILE> > /tmp/42c-happy-status.json
 
 # macOS / Linux — Token mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+SCAN42C_HAPPY_PATH_ONLY=true SCAN42C_REPORT_GENERATE_CURL_COMMAND=false \
 <binary> scan run --enrich=false \
   --freemium-host stateless.42crunch.com:443 --token "$TRIAL_TOKEN" \
   --output /tmp/42c-happy-report.json --output-format json \
   <relative-oas-path> --conf-file <CONF_FILE> > /tmp/42c-happy-status.json
 ```
 
-```powershell
-# Windows — Platform mode
-Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false `
-  --output "$env:TEMP\42c-happy-report.json" --output-format json `
-  <relative-oas-path> --conf-file <CONF_FILE> > "$env:TEMP\42c-happy-status.json"
+*Windows:* `./windows-commands.md` → **Scan — Step 8 (run)**.
 
-# Windows — Token mode
-Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false `
-  --freemium-host stateless.42crunch.com:443 --token $env:TRIAL_TOKEN `
-  --output "$env:TEMP\42c-happy-report.json" --output-format json `
-  <relative-oas-path> --conf-file <CONF_FILE> > "$env:TEMP\42c-happy-status.json"
-```
-
-Extract only failing happy paths — never include raw output in your response.
-
-> **Platform note**: macOS/Linux use the Python snippet below. Windows users
-> should use the PowerShell equivalent that follows.
+Extract only failing happy paths with the bundled script — never include raw
+output in your response:
 
 ```bash
-# macOS / Linux
-python3 << 'EOF'
-import json
-status = json.load(open("/tmp/42c-happy-status.json"))
-if status.get("statusCode") != 0:
-    print(f"scan_error: statusCode={status.get('statusCode')} {status.get('statusMessage','')}")
-    raise SystemExit(0)
-# Reconstruct the combined shape from the clean status + report files
-data = {**status, "report": json.load(open("/tmp/42c-happy-report.json"))}
-results = data.get("results", data.get("scanResults", []))
-if isinstance(results, dict):
-    results = [results]
-fails = [
-    (r.get("operationId", r.get("path","?")), t.get("testKey","?"), t.get("httpStatus",""), t.get("reason",""))
-    for r in results
-    for t in r.get("testResults", [])
-    if t.get("status") == "fail" and "happy" in t.get("testKey","").lower()
-]
-if fails:
-    print(f"happy_path_failures[{len(fails)}]{{operation,test,status,reason}}:")
-    for op, test, code, reason in fails:
-        print(f"  {op},{test},{code},{reason[:60]}")
-else:
-    print("happy_path_failures: none")
-EOF
+python3 "<scripts>/extract_scan_happy.py" \
+  /tmp/42c-happy-status.json /tmp/42c-happy-report.json
 ```
 
-```powershell
-# Windows
-$status = Get-Content "$env:TEMP\42c-happy-status.json" -Raw | ConvertFrom-Json
-if ($status.statusCode -ne 0) { Write-Host "scan_error: statusCode=$($status.statusCode) $($status.statusMessage)"; exit }
-# Reconstruct the combined shape from the clean status + report files
-$report = Get-Content "$env:TEMP\42c-happy-report.json" -Raw | ConvertFrom-Json
-$data = $status | Select-Object *; $data | Add-Member -NotePropertyName report -NotePropertyValue $report -Force
-$results = if ($data.results) { $data.results } elseif ($data.scanResults) { $data.scanResults } else { @() }
-if ($results -is [PSCustomObject]) { $results = @($results) }
-$fails = @()
-foreach ($r in $results) {
-    foreach ($t in $r.testResults) {
-        if ($t.status -eq 'fail' -and $t.testKey -match 'happy') {
-            $op     = if ($r.operationId) { $r.operationId } elseif ($r.path) { $r.path } else { '?' }
-            $test   = if ($t.testKey) { $t.testKey } else { '?' }
-            $code   = if ($t.httpStatus) { $t.httpStatus } else { '' }
-            $reason = if ($t.reason) { $t.reason.Substring(0, [Math]::Min(60, $t.reason.Length)) } else { '' }
-            $fails += "$op,$test,$code,$reason"
-        }
-    }
-}
-if ($fails.Count -gt 0) {
-    Write-Host "happy_path_failures[$($fails.Count)]{operation,test,status,reason}:"
-    foreach ($f in $fails) { Write-Host "  $f" }
-} else {
-    Write-Host "happy_path_failures: none"
-}
-```
+It prints `scan_error: ...` if the run failed (map it against the Status
+handling table), else a TOON list `happy_path_failures[N]{operation,test,status,reason}`
+or `happy_path_failures: none`.
+
+*Windows without python3:* `./windows-commands.md` → **Scan — Step 8 (extraction)**.
 
 ### Parse results per operation
 
@@ -925,7 +917,7 @@ failing operation before requesting manual input.
 
 ### Iteration
 
-After resolving each batch of failures, re-run using the same command as above (report to `/tmp/42c-happy-report.json` + status to `/tmp/42c-happy-status.json` on macOS/Linux, the `%TEMP%` equivalents on Windows) and re-extract with the same extraction snippet above.
+After resolving each batch of failures, re-run using the same command as above (report to `/tmp/42c-happy-report.json` + status to `/tmp/42c-happy-status.json` on macOS/Linux, the `%TEMP%` equivalents on Windows) and re-run `extract_scan_happy.py`.
 
 For each operation where the root cause cannot be resolved (e.g. the required
 resource cannot be created in this environment), ask the user directly:
@@ -953,13 +945,12 @@ warning before continuing:
 > ⚠️ Proceeding without a database reset — scan results may be affected by
 > residual state from happy path runs.
 
-### Restore runtime flags
+### Ready for the full scan
 
-Once all happy paths pass, set `happyPathOnly: false` before the full scan:
-
-```json
-"happyPathOnly": false
-```
+Once all happy paths pass, proceed to Step 9. No config change is needed —
+happy-path gating was applied via the `SCAN42C_HAPPY_PATH_ONLY` env var on the
+Step 8 command only, and the full scan simply omits it. The committed
+`scanconf.json` was never mutated.
 
 ---
 
@@ -987,222 +978,55 @@ findings.
 ```bash
 # macOS / Linux — Platform mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+SCAN42C_REPORT_GENERATE_CURL_COMMAND=false SCAN42C_REPORT_ISSUES_ONLY=true \
 <binary> scan run --enrich=false --report-sqg \
   --output /tmp/42c-scan-report.json --output-format json \
   <relative-oas-path> --conf-file <CONF_FILE> > /tmp/42c-scan-status.json
 
 # macOS / Linux — Token mode
 set -a; . "$HOME/.42crunch/conf/env"; set +a
+SCAN42C_REPORT_GENERATE_CURL_COMMAND=false SCAN42C_REPORT_ISSUES_ONLY=true \
 <binary> scan run --enrich=false \
   --freemium-host stateless.42crunch.com:443 --token "$TRIAL_TOKEN" \
   --output /tmp/42c-scan-report.json --output-format json \
   <relative-oas-path> --conf-file <CONF_FILE> > /tmp/42c-scan-status.json
 ```
 
-```powershell
-# Windows — Platform mode
-Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false --report-sqg `
-  --output "$env:TEMP\42c-scan-report.json" --output-format json `
-  <relative-oas-path> --conf-file <CONF_FILE> > "$env:TEMP\42c-scan-status.json"
+*Windows:* `./windows-commands.md` → **Scan — Step 10 (run)**.
 
-# Windows — Token mode
-Get-Content "$env:APPDATA\42Crunch\conf\env" | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-& <binary> scan run --enrich=false `
-  --freemium-host stateless.42crunch.com:443 --token $env:TRIAL_TOKEN `
-  --output "$env:TEMP\42c-scan-report.json" --output-format json `
-  <relative-oas-path> --conf-file <CONF_FILE> > "$env:TEMP\42c-scan-status.json"
-```
-
-**Immediately after the command completes**, extract the summary as TOON
-(Token-Oriented Object Notation — https://github.com/toon-format/toon) —
-never include raw report content in your response.
-
-> **SQG field location — common mistake to avoid:**
-> The SQG verdict is `sqgPass` (a boolean) at the **root of the status object**
-> (`/tmp/42c-scan-status.json`) — NOT nested inside the report, and not under a
-> `sqg` key. The extraction snippet reconstructs `data = {**status, "report":
-> <report>}`, so `data.get("sqgPass")` and `data.get("sqgDetails")` read from
-> the status object exactly as before. Always use the prescribed extraction snippet
-> below rather than writing a custom parser, to avoid reading the wrong field.
-
-> **Platform note**: macOS/Linux use the Python snippet below. Windows users
-> should use the PowerShell equivalent that follows.
+**Immediately after the command completes**, run the bundled summary extractor
+(output is TOON — Token-Oriented Object Notation, https://github.com/toon-format/toon)
+— never include raw report content in your response:
 
 ```bash
-# macOS / Linux
-python3 << 'EOF'
-import json
-
-status = json.load(open("/tmp/42c-scan-status.json"))
-if status.get("statusCode") != 0:
-  print(f"scan_error: statusCode={status.get('statusCode')} {status.get('statusMessage','')}")
-  raise SystemExit(0)
-
-# Reconstruct the combined shape from the clean status + report files
-data = {**status, "report": json.load(open("/tmp/42c-scan-report.json"))}
-report = data.get("report", {})
-summary = report.get("summary", {})
-
-sqg = "PASSED" if data.get("sqgPass") else ("FAILED" if "sqgPass" in data else "N/A")
-print(f"sqgPass: {sqg}")
-for d in data.get("sqgDetails", []):
-    rules = d.get("blockingRules", [])
-    if rules:
-        print(f"blockingRules[{len(rules)}]: {', '.join(rules)}")
-
-auth_summary = (((summary.get("authorizationTestRequests") or {}).get("executed") or {}).get("total"))
-issue_summary = (((summary.get("issues") or {}).get("total")))
-if auth_summary is not None:
-  print(f"authorizationRequests: {auth_summary}")
-if issue_summary is not None:
-  print(f"issuesTotal: {issue_summary}")
-
-def severity_from_criticality(value):
-  mapping = {
-    5: "critical",
-    4: "high",
-    3: "medium",
-    2: "low",
-    1: "info",
-    0: "info",
-  }
-  return mapping.get(value, "")
-
-failures = []
-operations = report.get("operations") or {}
-if isinstance(operations, dict):
-  for operation_id, operation in operations.items():
-    for section_name in ("authorizationRequestsResults", "conformanceRequestsResults", "customRequestsResults"):
-      for entry in operation.get(section_name, []) or []:
-        outcome = entry.get("outcome") or {}
-        # The engine's verdict is outcome.status: "correct" = the API behaved
-        # correctly (e.g. enforced 401/403 on an authorization swap, or accepted
-        # a partial-security scenario). testSuccessful is NOT a reliable
-        # discriminator — it is false even for correctly-enforced endpoints, so
-        # filtering on it alone reports secured endpoints as failures. Skip any
-        # entry the engine marked "correct".
-        if outcome.get("testSuccessful") is True or outcome.get("status") == "correct":
-          continue
-        test = entry.get("test") or {}
-        severity = severity_from_criticality(outcome.get("criticality"))
-        failures.append((
-          operation_id,
-          test.get("key", "?"),
-          severity,
-        ))
-
-if not failures:
-  legacy_results = data.get("results", data.get("scanResults", []))
-  if isinstance(legacy_results, dict):
-    legacy_results = [legacy_results]
-  for result in legacy_results:
-    for test_result in result.get("testResults", []):
-      if test_result.get("status") == "fail":
-        failures.append((
-          result.get("operationId", result.get("path", "?")),
-          test_result.get("testKey", "?"),
-          test_result.get("severity", ""),
-        ))
-
-if failures:
-  unique_failures = []
-  seen = set()
-  for failure in failures:
-    if failure in seen:
-      continue
-    seen.add(failure)
-    unique_failures.append(failure)
-  print(f"\nfailures[{len(unique_failures)}]{{operation,test,severity}}:")
-  for op, test, sev in unique_failures:
-        print(f"  {op},{test},{sev}")
-else:
-    print("failures: none")
-EOF
+python3 "<scripts>/extract_scan_summary.py" \
+  /tmp/42c-scan-status.json /tmp/42c-scan-report.json
 ```
 
-```powershell
-# Windows
-$status = Get-Content "$env:TEMP\42c-scan-status.json" -Raw | ConvertFrom-Json
-if ($status.statusCode -ne 0) { Write-Host "scan_error: statusCode=$($status.statusCode) $($status.statusMessage)"; exit }
-# Reconstruct the combined shape from the clean status + report files
-$reportContent = Get-Content "$env:TEMP\42c-scan-report.json" -Raw | ConvertFrom-Json
-$data = $status | Select-Object *; $data | Add-Member -NotePropertyName report -NotePropertyValue $reportContent -Force
-$report = if ($data.report) { $data.report } else { $null }
-$summary = if ($report -and $report.summary) { $report.summary } else { $null }
-$sqg = if ($null -ne $data.sqgPass) { if ($data.sqgPass) { 'PASSED' } else { 'FAILED' } } else { 'N/A' }
-Write-Host "sqgPass: $sqg"
-foreach ($d in $data.sqgDetails) {
-    if ($d.blockingRules -and $d.blockingRules.Count -gt 0) {
-        Write-Host "blockingRules[$($d.blockingRules.Count)]: $($d.blockingRules -join ', ')"
-    }
-}
-if ($summary -and $summary.authorizationTestRequests -and $summary.authorizationTestRequests.executed) {
-  Write-Host "authorizationRequests: $($summary.authorizationTestRequests.executed.total)"
-}
-if ($summary -and $summary.issues) {
-  Write-Host "issuesTotal: $($summary.issues.total)"
-}
+It prints:
 
-function Get-SeverityFromCriticality {
-  param([int]$criticality)
-  switch ($criticality) {
-    5 { 'critical' }
-    4 { 'high' }
-    3 { 'medium' }
-    2 { 'low' }
-    default { 'info' }
-  }
-}
-
-$failures = @()
-if ($report -and $report.operations) {
-  $report.operations.PSObject.Properties | ForEach-Object {
-    $opName = $_.Name
-    $op = $_.Value
-    foreach ($sectionName in @('authorizationRequestsResults', 'conformanceRequestsResults', 'customRequestsResults')) {
-      $entries = $op.$sectionName
-      if (-not $entries) { continue }
-      foreach ($entry in $entries) {
-        # Skip entries the engine marked "correct" (e.g. enforced 401/403 on an
-        # authorization swap). testSuccessful alone is false even for secured
-        # endpoints, so filtering on it reports them as failures. See the Python
-        # note above.
-        if ($entry.outcome -and ($entry.outcome.testSuccessful -eq $true -or $entry.outcome.status -eq 'correct')) { continue }
-        $testKey = if ($entry.test -and $entry.test.key) { $entry.test.key } else { '?' }
-        $severity = if ($entry.outcome) { Get-SeverityFromCriticality([int]$entry.outcome.criticality) } else { '' }
-        $failures += "$opName,$testKey,$severity"
-      }
-    }
-  }
-}
-
-if ($failures.Count -eq 0) {
-$results = if ($data.results) { $data.results } elseif ($data.scanResults) { $data.scanResults } else { @() }
-if ($results -is [PSCustomObject]) { $results = @($results) }
-foreach ($r in $results) {
-    foreach ($t in $r.testResults) {
-        if ($t.status -eq 'fail') {
-            $op  = if ($r.operationId) { $r.operationId } elseif ($r.path) { $r.path } else { '?' }
-            $test = if ($t.testKey) { $t.testKey } else { '?' }
-            $sev  = if ($t.severity) { $t.severity } else { '' }
-            $failures += "$op,$test,$sev"
-        }
-    }
-}
-}
-
-$failures = $failures | Select-Object -Unique
-if ($failures.Count -gt 0) {
-    Write-Host "`nfailures[$($failures.Count)]{operation,test,severity}:"
-    foreach ($f in $failures) { Write-Host "  $f" }
-} else {
-    Write-Host "failures: none"
-}
+```
+sqgPass: PASSED|FAILED|N/A
+blockingRules[N]: <rule, ...>              # one line per sqgDetails entry with rules
+authorizationRequests: <n>
+issuesTotal: <n>
+failures[N]{operation,test,severity}:      # deduplicated; "failures: none" when empty
+  <operationId>,<test-key>,<severity>
 ```
 
-Use only the TOON output above when rendering Step 12. Do not load or display
-the raw scan output file content.
+Two correctness rules the script already encodes (do not re-derive by hand):
+- **Verdict = `outcome.status`.** An entry marked `"correct"` (e.g. the server
+  enforced 401/403 on an authorization swap) is NOT a failure and is skipped.
+  `outcome.testSuccessful` is false even for correctly-enforced endpoints, so
+  it is not a usable discriminator on its own.
+- **`sqgPass` is a boolean at the root of the status object** — not nested in
+  the report, not under an `sqg` key. Always use this script rather than a
+  custom parser, to avoid reading the wrong field.
+
+*Windows without python3:* `./windows-commands.md` → **Scan — Step 10 (extraction)**.
+
+Use only this TOON output when rendering Step 12. Do not load or display the
+raw scan output file content.
 
 ## Step 11 — Database Reset Reminder (After Full Scan)
 
@@ -1265,75 +1089,17 @@ read/write nature **from your Step 5 classification** (not HTTP method alone —
   under the operation's `scenarios`, the attacker's under
   `authorizationRequestsResults`.
 
-Surface the evidence for every authorization finding:
+Surface the evidence for every authorization finding with the bundled script:
 
 ```bash
-# macOS / Linux
-python3 << 'EOF'
-import json, re, base64
-d = {"report": json.load(open("/tmp/42c-scan-report.json"))}
-ops = d.get("report", {}).get("operations", {})
-
-def body(b64):
-    if not b64: return None
-    raw = base64.b64decode(b64).decode("utf-8", "replace")
-    parts = re.split(r'\r?\n\r?\n', raw, maxsplit=1)
-    m = re.search(r'\{.*\}', parts[1] if len(parts) > 1 else raw, re.S)
-    return m.group() if m else None
-
-def owner_body(op):
-    for s in op.get("scenarios", []) or []:
-        for r in (s.get("requests") or [s]):
-            b = body((r.get("response") or {}).get("rawPayload"))
-            if b: return b
-    return None
-
-for opid, op in ops.items():
-    auth = [e for e in op.get("authorizationRequestsResults", []) or []
-            if "swapping" in (e.get("test") or {}).get("key", "")
-            and (e.get("outcome") or {}).get("status") == "defective"]
-    if not auth: continue
-    method = (op.get("method") or "").upper()
-    ob = owner_body(op)
-    for e in auth:
-        ab = body((e.get("response") or {}).get("rawPayload"))
-        same = ab is not None and ab == ob
-        print(f"{opid} [{method}] bodies_identical={same}")
-        print(f"    owner:    {(ob or '(none)')[:120]}")
-        print(f"    attacker: {(ab or '(none)')[:120]}")
-EOF
+python3 "<scripts>/compare_auth_bodies.py" /tmp/42c-scan-report.json
 ```
 
-```powershell
-# Windows
-$reportContent = Get-Content "$env:TEMP\42c-scan-report.json" -Raw | ConvertFrom-Json
-$d = [PSCustomObject]@{ report = $reportContent }
-function Get-JsonBody($b64) {
-  if (-not $b64) { return $null }
-  $txt = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64))
-  $body = ($txt -split "(?s)\r?\n\r?\n", 2)[1]
-  $m = [regex]::Match([string]$body, '(?s)\{.*\}')
-  if ($m.Success) { $m.Value } else { $null }
-}
-foreach ($p in $d.report.operations.PSObject.Properties) {
-  $op = $p.Value
-  $auth = @($op.authorizationRequestsResults | Where-Object { $_.test.key -like '*swapping*' -and $_.outcome.status -eq 'defective' })
-  if (-not $auth) { continue }
-  $ob = $null
-  foreach ($s in $op.scenarios) {
-    $steps = @($s.requests); if (-not $steps) { $steps = @($s) }
-    foreach ($r in $steps) { $b = Get-JsonBody $r.response.rawPayload; if ($b) { $ob = $b; break } }
-    if ($ob) { break }
-  }
-  foreach ($e in $auth) {
-    $ab = Get-JsonBody $e.response.rawPayload
-    $same = ($ab -and $ab -eq $ob)
-    Write-Host "$($p.Name) [$($op.method.ToUpper())] bodies_identical=$same"
-    Write-Host "    owner:    $ob"
-    Write-Host "    attacker: $ab"
-  }
-}
-```
+For each operation with a defective authentication-swapping result it prints
+`<operation> [<METHOD>] bodies_identical=<bool>` and a 120-char preview of the
+owner and attacker bodies (`authorization_findings: none` when there are none).
+
+*Windows without python3:* `./windows-commands.md` → **Scan — Step 12a-0 (body comparison)**.
 
 Classify each **read** finding from the output:
 - `bodies_identical=True`, or the attacker body otherwise carries the victim's
@@ -1469,63 +1235,11 @@ Only apply fixes after explicit user confirmation.
 
 ### 12e — Server-side / Implementation Fixes
 
-OAS fixes document the contract but do not secure the API. Every SQG-blocking finding has a root cause in the server-side code. After 12d, continue to 12e to locate and fix the implementation.
+OAS fixes document the contract but do not secure the API. Every SQG-blocking finding has a root cause in the server-side code.
 
-#### 12e-1 — Gate
+**Gate:** trigger 12e only for confirmed **SQG-blocking** findings — 🔴 authorization failures (BOLA/BFLA confirmed) or 🟠 conformance findings matched in `sqgDetails[].blockingRules`. When the scan has zero SQG-blocking findings (including token mode with no gate, or a passing SQG), **skip 12e entirely and go to Step 12f** — do not read the companion.
 
-Trigger 12e for every confirmed finding that is SQG-blocking:
-- 🔴 Authorization failures (BOLA / BFLA confirmed)
-- 🟠 Conformance findings matched in `sqgDetails[].blockingRules`
-
-Skip 12e entirely only when the scan has zero SQG-blocking findings.
-
-#### 12e-2 — Consent gate for code fixes
-
-Ask the user directly:
-- **question**: `"The OAS has been updated. The following SQG-blocking issues also require server-side code fixes — the API implementation is the root cause. Should I locate and fix the code? <list all SQG-blocking findings by operation>"`
-- **options**: `["Yes — find and fix the code", "Show me the relevant code first", "No — skip code fixes"]`
-
-If **"Show me the relevant code first"** is chosen, locate each handler (step 12e-3) and display the relevant code block without making any changes, then ask the user again with the same options to proceed.
-
-#### 12e-3 — Locate route handlers
-
-For each SQG-blocking finding:
-
-1. Search the codebase for files that register or handle the affected HTTP method + path. Use grep for the path fragment and common framework patterns: `router.get/post/put/delete/patch`, `@app.route`, `@GetMapping`, `@PostMapping`, `@RestController`, `app.get(`, `Route::get(`, etc.
-2. If not found by path, widen the search to the operation ID or a handler name derived from the path.
-3. Read the identified handler file and any middleware it calls (auth middleware, serializers, validators, permission decorators).
-4. Report: `"Found handler for <METHOD> <path> in <file>:<line>."`
-5. If no handler is found after the widened search, report it as not found and skip the fix for that operation — do not block the remaining fixes.
-
-#### 12e-4 — Apply fix by finding type
-
-| Finding type | Root cause to look for in the code | Server-side fix |
-|---|---|---|
-| **BOLA** (OWASP API1) | Handler fetches a resource by a path/query ID without verifying that it belongs to the authenticated user | Add an ownership check after the resource is fetched: compare `resource.owner_id` (or equivalent field) to the authenticated user's ID; return `403 Forbidden` if they do not match |
-| **BFLA** (OWASP API5) | Handler for a privileged/admin operation does not check the caller's role, scope, or group membership before executing | Add a role/scope/permission check at the top of the handler; return `403 Forbidden` if the caller lacks the required privilege |
-| **Conformance — undocumented response fields** | Response serializer or ORM query returns fields not present in the OAS schema | Ask the user directly: _"The response for `<METHOD> <path>` includes fields not declared in the OAS: `<field list>`. Are these intentional?"_ — **options**: `["Add them to the OAS (field is intentional)", "Remove them from the code (field should not be returned)"]`. Apply the chosen fix: extend the OAS schema, or filter/exclude the fields in the serializer/handler |
-| **Conformance — missing required response fields** | Handler response omits a field marked `required` in the OAS schema | Add the missing field to the response payload or serializer |
-| **Conformance — wrong response status code** | Handler returns a status code that differs from what the OAS declares as the success code | Update the handler to return the status code declared in the OAS |
-| **Conformance — wrong or missing Content-Type / headers** | Handler does not set the `Content-Type` or other response headers required by the OAS | Add the required headers to the response |
-| **Conformance — schema type/format mismatch** | Handler returns a field with a different type or format than declared (e.g., returns a string where the OAS declares integer) | Coerce or cast the field to the declared type/format in the serializer or handler |
-
-#### 12e-5 — Diff and confirm before writing
-
-For each proposed code change, display it in unified diff format and ask the user directly:
-- **question**: `"Apply this fix to <file>?"` — **options**: `["Yes", "No — skip this one"]`
-
-Only write the change after explicit confirmation. Advance to the next finding only after the current one is confirmed or skipped.
-
-#### 12e-6 — Summary
-
-After all code fixes are applied or skipped, append to the final output:
-
-```
-── Server-side Fixes ────────────────────────────────────────────────────
-  Fixed:   <n> issue(s) across <m> file(s)
-  Skipped: <k> issue(s) (user declined or handler not found)
-─────────────────────────────────────────────────────────────────────────
-```
+When the gate triggers, **read `./server-side-fixes.md`** and follow it (consent gate → locate handlers → apply fix by finding type → diff-and-confirm → summary). Return here for Step 12f when it completes.
 
 ### 12f — Permission Gate Before Verification Scan
 

@@ -3,6 +3,12 @@
 Shared entry point for all 42Crunch skills. Run these steps in order before
 any skill-specific logic. Do not proceed if any step fails or the user cancels.
 
+> **OS gate — Windows only**: every command block in this file and the other
+> reference docs is written for macOS/Linux (bash + python3). On **Windows**,
+> read `./windows-commands.md` once now — it holds the PowerShell equivalent of
+> each block, keyed by doc and step — and use its sections wherever a command
+> block appears. On macOS/Linux, never read that file.
+
 ---
 
 ## Fast Path — Skip Redundant Checks
@@ -50,26 +56,7 @@ else
 fi
 ```
 
-```powershell
-# Windows
-$BinaryPath = "$env:APPDATA\42Crunch\bin\42c-ast.exe"
-$CacheFile = "$env:APPDATA\42Crunch\conf\.preflight-cache"
-$Ttl = if ($env:PREFLIGHT_CACHE_TTL_SECONDS) { [int]$env:PREFLIGHT_CACHE_TTL_SECONDS } else { 86400 }
-if (-not (Test-Path $BinaryPath)) { "BINARY=missing" }
-else {
-  $fresh = $false
-  $line = Select-String -Path $CacheFile -Pattern '^CHECKED_AT=' -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($line) {
-    $CheckedAt = [int]($line.Line -replace '^CHECKED_AT=', '')
-    $Now = [int][double]::Parse((Get-Date -UFormat %s))
-    if (($Now - $CheckedAt) -lt $Ttl) {
-      & $BinaryPath --version *> $null
-      if ($LASTEXITCODE -eq 0) { $fresh = $true }
-    }
-  }
-  if ($fresh) { "BINARY=fresh" } else { "BINARY=check" }
-}
-```
+*Windows:* `./windows-commands.md` → **Pre-flight — Step 1**.
 
 - **`BINARY=fresh`** → binary present, verified against the manifest within
   the cache TTL, and runs. Skip `./binary-setup.md` entirely — do not read
@@ -80,6 +67,17 @@ else {
   if an update was applied. If the manifest is unreachable, announce:
   `"Could not reach the update server — continuing with installed 42c-ast v<version>."` then continue to Step 2.
 - **`BINARY=missing`** → announce `"The 42c-ast binary isn't installed yet — running setup now."` then follow the `42crunch-setup` skill as a nested workflow (caller context: `pre-flight`). Do not proceed if setup fails. On success, setup's credential pass has just classified (or freshly configured) the credential mode — **skip Step 2's classification**, reuse that mode, and continue directly to Step 3.
+
+### Resolve the scripts directory
+
+Just as the confirmed binary path is carried forward as `<binary>` for the
+workflow commands, resolve the plugin's bundled `scripts/` directory to an
+**absolute path once** here and call it `<scripts>`: it is the `scripts/` folder
+at the plugin root — the sibling of this `references/` directory (do **not** use
+an environment variable such as the plugin-root var; its availability in a
+skill's shell is not guaranteed on Codex). Substitute `<scripts>` literally into
+every `python3 "<scripts>/..."` invocation in the workflow docs below, exactly
+as `<binary>` is substituted for the binary path.
 
 ---
 
@@ -108,24 +106,7 @@ else
 fi
 ```
 
-```powershell
-# Windows
-$EnvFile = "$env:APPDATA\42Crunch\conf\env"
-if (Select-String -Path $EnvFile -Pattern '^TRIAL_TOKEN=' -Quiet -ErrorAction SilentlyContinue) {
-  # .trial-expired is the legacy sentinel name written by older plugin versions
-  if ((Test-Path "$env:APPDATA\42Crunch\conf\.token-limit") -or (Test-Path "$env:APPDATA\42Crunch\conf\.trial-expired")) {
-    Write-Output "MODE=token_limit"
-  } else {
-    Write-Output "MODE=token"
-  }
-} elseif (Select-String -Path $EnvFile -Pattern '^API_KEY=(api_|ide_)' -Quiet -ErrorAction SilentlyContinue) {
-  Write-Output "MODE=platform"
-} elseif (Select-String -Path $EnvFile -Pattern '^API_KEY=' -Quiet -ErrorAction SilentlyContinue) {
-  Write-Output "MODE=badformat"
-} else {
-  Write-Output "MODE=none"
-}
-```
+*Windows:* `./windows-commands.md` → **Pre-flight — Step 2**.
 
 - **`MODE=token`** → **Token mode**. Use `--freemium-host stateless.42crunch.com:443` and `--token <TRIAL_TOKEN>` in all commands (the token is substituted directly into the `42c-ast` invocation — never echoed on its own). Proceed silently.
 - **`MODE=token_limit`** → a previous run already discovered this token plan hit its usage limit (Starter trial ended, or Individual / Individual Pro monthly tokens exhausted). Skip Step 3 onward entirely — follow `./token-limit.md` now, without attempting any `42c-ast` call.
