@@ -1,7 +1,7 @@
 {
   "name": "42crunch-api-security-testing",
   "description": "Catch API security issues during development: audit, scan, remediate, validate with AI guardrails in Codex.",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "author": {
     "name": "42Crunch",
     "email": "support@42crunch.com",
@@ -29,10 +29,14 @@
   "interface": {
     "displayName": "42Crunch API Security",
     "shortDescription": "Audit, scan, and remediate API security issues directly in Codex.",
-    "longDescription": "42Crunch brings enterprise-grade API security testing into your Codex workflow. Audit OpenAPI specs for OWASP API Security vulnerabilities, run live conformance and authorization scans (BOLA/BFLA), apply AI-assisted fixes, and enforce Security Quality Gates — all through natural language.",
+    "longDescription": "42Crunch brings enterprise-grade API security testing into your Codex workflow. Audit OpenAPI specs for OWASP API Security vulnerabilities, run live conformance and authorization scans (BOLA/BFLA), apply AI-assisted fixes, and enforce Security Quality Gates \u2014 all through natural language.",
     "developerName": "42Crunch",
     "category": "Security",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://42crunch.com",
     "privacyPolicyURL": "https://42crunch.com/privacy-policy/",
     "termsOfServiceURL": "https://42crunch.com/terms-of-use/",
